@@ -2,6 +2,7 @@
 #define PID_CONTROL_H
 
 #include <stddef.h>
+#include <stdbool.h>
 #include "esp_err.h"
 
 #define PID_CONTROL_STORAGE_SIZE 64u
@@ -23,5 +24,9 @@ size_t pid_control_storage_size(void);
 size_t pid_control_storage_alignment(void);
 esp_err_t pid_control_init(void* storage, size_t storage_size, pid_control_handle* handle, const pid_control_config* config);
 esp_err_t pid_control_update(pid_control_handle handle, float setpoint, float* u_out, float measurement);
+esp_err_t pid_control_reset_state(pid_control_handle handle);
+esp_err_t pid_control_set_gains(pid_control_handle handle, bool reset_on_change, float kp, float ki, float kd);
+esp_err_t pid_control_set_anti_windup(pid_control_handle handle, float kaw);
+esp_err_t pid_control_set_output_limits(pid_control_handle handle, float u_min, float u_max);
 
 #endif // PID_CONTROL_H

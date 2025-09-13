@@ -147,6 +147,37 @@ static void pid_commit_incremental(struct pid_control* ctrl, struct pid_result r
     ctrl->prev_err = res.err;
 }
 
+// setters helpers
+static esp_err_t pid_validate_gains(float kp, float ki, float kd) {
+    if(!is_finite(kp) || !is_finite(ki) || !is_finite(kd)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if(kp < 0.0f || ki < 0.0f || kd < 0.0f) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t pid_validate_anti_windup(float kaw) {
+    if(!is_finite(kaw)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if(kaw < 0.0f) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t pid_validate_output_limits(float u_min, float u_max) {
+    if(!is_finite(u_min) || !is_finite(u_max)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if(u_min >= u_max) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return ESP_OK;
+}
+
 esp_err_t pid_control_init(void* storage, size_t storage_size, pid_control_handle* handle, const pid_control_config* config) {
     esp_err_t status = ESP_OK;
     if(storage == NULL || handle == NULL || config == NULL) {
@@ -217,6 +248,115 @@ esp_err_t pid_control_update(pid_control_handle handle, float setpoint, float* u
         pid_commit_incremental(ctrl, res);
 
         *u_out = res.u;
+    }
+
+    return status;
+}
+
+esp_err_t pid_control_reset_state(pid_control_handle handle) {
+    esp_err_t status = ESP_OK;
+    if(handle == NULL) {
+        #if CONFIG_PID_CONTROL_LOGGING
+            ESP_LOGE(TAG, "Invalid argument: NULL pointer");
+        #endif
+        status = ESP_ERR_INVALID_ARG;
+    }
+
+    if(status == ESP_OK) {
+        struct pid_control* ctrl = handle;
+        ctrl->prev_err = 0.0f;
+        ctrl->prev_err2 = 0.0f;
+        const struct clamp_range range = { .min = ctrl->u_min, .max = ctrl->u_max };
+        ctrl->last_u = clampf(0.0f, range);
+    }
+
+    return status;
+}
+
+esp_err_t pid_control_set_gains(pid_control_handle handle, bool reset_on_change, float kp, float ki, float kd) {
+    esp_err_t status = ESP_OK;
+    if(handle == NULL) {
+        #if CONFIG_PID_CONTROL_LOGGING
+            ESP_LOGE(TAG, "Invalid argument: NULL pointer");
+        #endif
+        status = ESP_ERR_INVALID_ARG;
+    }
+
+    if(status == ESP_OK) {
+        status = pid_validate_gains(kp, ki, kd);
+        if(status != ESP_OK) {
+            #if CONFIG_PID_CONTROL_LOGGING
+                ESP_LOGE(TAG, "Invalid argument: invalid PID gains");
+            #endif
+        }
+    }
+
+    if(status == ESP_OK) {
+        struct pid_control* ctrl = handle;
+        ctrl->kp = kp;
+        ctrl->ki = ki;
+        ctrl->kd = kd;
+    }
+
+    if(status == ESP_OK && reset_on_change) {
+        status = pid_control_reset_state(handle);
+    }
+
+    return status;
+}
+
+esp_err_t pid_control_set_anti_windup(pid_control_handle handle, float kaw) {
+    esp_err_t status = ESP_OK;
+    if(handle == NULL) {
+        #if CONFIG_PID_CONTROL_LOGGING
+            ESP_LOGE(TAG, "Invalid argument: NULL pointer");
+        #endif
+        status = ESP_ERR_INVALID_ARG;
+    }
+
+    if(status == ESP_OK) {
+        status = pid_validate_anti_windup(kaw);
+        if(status != ESP_OK) {
+            #if CONFIG_PID_CONTROL_LOGGING
+                ESP_LOGE(TAG, "Invalid argument: invalid anti-windup gain");
+            #endif
+        }
+    }
+
+    if(status == ESP_OK) {
+        struct pid_control* ctrl = handle;
+        ctrl->kaw = kaw;
+    }
+
+    return status;
+}
+
+esp_err_t pid_control_set_output_limits(pid_control_handle handle, float u_min, float u_max) {
+    esp_err_t status = ESP_OK;
+    if(handle == NULL) {
+        #if CONFIG_PID_CONTROL_LOGGING
+            ESP_LOGE(TAG, "Invalid argument: NULL pointer");
+        #endif
+        status = ESP_ERR_INVALID_ARG;
+    }
+
+    if(status == ESP_OK) {
+        status = pid_validate_output_limits(u_min, u_max);
+        if(status != ESP_OK) {
+            #if CONFIG_PID_CONTROL_LOGGING
+                ESP_LOGE(TAG, "Invalid argument: invalid output limits");
+            #endif
+        }
+    }
+
+    if(status == ESP_OK) {
+        struct pid_control* ctrl = handle;
+
+        ctrl->u_min = u_min;
+        ctrl->u_max = u_max;
+
+        const struct clamp_range range = { .min = u_min, .max = u_max };
+        ctrl->last_u = clampf(ctrl->last_u, range);
     }
 
     return status;
