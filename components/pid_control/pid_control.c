@@ -101,14 +101,6 @@ static void pid_apply_config(struct pid_control* ctrl, const pid_control_config*
     ctrl->u_max = config->u_max;
 }
 
-size_t pid_control_storage_size(void) {
-    return sizeof(struct pid_control);
-}
-
-size_t pid_control_storage_alignment(void) {
-    return PID_CONTROL_STORAGE_ALIGNMENT;
-}
-
 // update helpers
 static esp_err_t pid_validate_update_args(float setpoint, float measurement) {
     if(!is_finite(setpoint) || !is_finite(measurement)) {
@@ -178,6 +170,15 @@ static esp_err_t pid_validate_output_limits(float u_min, float u_max) {
     return ESP_OK;
 }
 
+// public API
+size_t pid_control_storage_size(void) {
+    return sizeof(struct pid_control);
+}
+
+size_t pid_control_storage_alignment(void) {
+    return PID_CONTROL_STORAGE_ALIGNMENT;
+}
+
 esp_err_t pid_control_init(void* storage, size_t storage_size, pid_control_handle* handle, const pid_control_config* config) {
     esp_err_t status = ESP_OK;
     if(storage == NULL || handle == NULL || config == NULL) {
@@ -223,7 +224,7 @@ esp_err_t pid_control_init(void* storage, size_t storage_size, pid_control_handl
     return status;
 }
 
-esp_err_t pid_control_update(pid_control_handle handle, float setpoint, float* u_out, float measurement) {
+esp_err_t pid_control_update(pid_control_handle handle, float setpoint, float measurement, float* u_out) {
     esp_err_t status = ESP_OK;
     if(handle == NULL || u_out == NULL) {
         #if CONFIG_PID_CONTROL_LOGGING
