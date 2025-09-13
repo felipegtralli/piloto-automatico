@@ -22,5 +22,6 @@ typedef struct {
 size_t pid_control_storage_size(void);
 size_t pid_control_storage_alignment(void);
 esp_err_t pid_control_init(void* storage, size_t storage_size, pid_control_handle* handle, const pid_control_config* config);
+esp_err_t pid_control_update(pid_control_handle handle, float setpoint, float* u_out, float measurement);
 
 #endif // PID_CONTROL_H

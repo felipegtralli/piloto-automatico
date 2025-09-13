@@ -1,5 +1,7 @@
 #include "pid_control.h"
+#include "esp_err.h"
 #include <stdint.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include <math.h>
 
@@ -7,6 +9,8 @@
     #include "esp_log.h"
     static const char TAG[] = "pid_control";
 #endif
+
+/* MISRA C:2012 Dir 1.1 note: Project may build with GNU dialect via ESP-IDF; this module avoids GNU-only constructs. */
 
 struct clamp_range {
     float min;
@@ -18,12 +22,16 @@ struct pid_req {
     size_t align;
 };
 
+struct pid_result {
+    float u;
+    float err;
+};
+
 struct pid_control {
     float kp;
     float ki;
     float kd;
     float kaw;
-    float integral_term;
     float prev_err;
     float prev_err2;
     float last_u;
@@ -35,14 +43,17 @@ _Static_assert(PID_CONTROL_STORAGE_SIZE >= sizeof(struct pid_control), "PID_CONT
 _Static_assert(PID_CONTROL_STORAGE_ALIGNMENT >= _Alignof(struct pid_control), "PID_CONTROL_STORAGE_ALIGNMENT is too small");
 _Static_assert((PID_CONTROL_STORAGE_ALIGNMENT & (PID_CONTROL_STORAGE_ALIGNMENT - 1u)) == 0u, "PID_CONTROL_STORAGE_ALIGNMENT must be power of two");
 
+// global helpers
 static inline bool is_finite(float x) {
     const float t = x;
-    return isfinite(t);
+    return (isfinite(t) != 0);
 }
 
 // must be power of two
+// MISRA C:2012 R11.4 deviation – pointer to integer cast for alignment check (no dereference).
 static inline bool is_aligned(const void* ptr, size_t align) {
-    return ((uintptr_t)ptr & (uintptr_t)(align - 1u)) == (uintptr_t)0;
+    const uintptr_t mask = (uintptr_t)align - (uintptr_t)1u;
+    return ((uintptr_t)ptr & mask) == (uintptr_t)0;
 }
 
 static inline float clampf(float x, struct clamp_range range) {
@@ -50,6 +61,7 @@ static inline float clampf(float x, struct clamp_range range) {
     return (t > range.max) ? range.max : t;
 }
 
+// init helpers
 static esp_err_t pid_validate_storage(const void* storage, size_t storage_size, struct pid_req req) {
     if(storage_size < req.size) {
         return ESP_ERR_INVALID_SIZE;
@@ -81,7 +93,6 @@ static void pid_apply_config(struct pid_control* ctrl, const pid_control_config*
     ctrl->ki = config->ki;
     ctrl->kd = config->kd;
     ctrl->kaw = config->kaw;
-    ctrl->integral_term = 0.0f;
     ctrl->prev_err = 0.0f;
     ctrl->prev_err2 = 0.0f;
     const struct clamp_range range = { .min = config->u_min, .max = config->u_max };
@@ -95,54 +106,118 @@ size_t pid_control_storage_size(void) {
 }
 
 size_t pid_control_storage_alignment(void) {
-    return (size_t)_Alignof(struct pid_control);
+    return PID_CONTROL_STORAGE_ALIGNMENT;
+}
+
+// update helpers
+static esp_err_t pid_validate_update_args(float setpoint, float measurement) {
+    if(!is_finite(setpoint) || !is_finite(measurement)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return ESP_OK;
+}
+
+// dU(z) = Kp * (1 - z^-1)E(z) + Ki * E(z) + Kd * (1 - 2z^-1 + z^-2)E(z) + back-calculation
+static struct pid_result pid_compute_incremental(const struct pid_control* ctrl, float setpoint, float measurement) {
+    static const float pid_second_diff_coeff = 2.0f;
+    
+    const float err = setpoint - measurement;
+
+    const float du_p = ctrl->kp * (err - ctrl->prev_err);
+    const float du_i = ctrl->ki * err;
+    const float du_d = ctrl->kd * (err - (pid_second_diff_coeff * ctrl->prev_err) + ctrl->prev_err2);
+
+    const struct clamp_range range = { .min = ctrl->u_min, .max = ctrl->u_max };
+    const float u_unsat = ctrl->last_u + du_p + du_i + du_d;
+    const float u_sat = clampf(u_unsat, range);
+
+    const float sat_err = u_sat - u_unsat;
+    const float du_aw = ctrl->kaw * sat_err;
+
+    const float du = du_p + du_i + du_d + du_aw;
+    float u = clampf((ctrl->last_u + du), range);
+
+    struct pid_result result = { .u = u, .err = err };
+    return result;
+}
+
+static void pid_commit_incremental(struct pid_control* ctrl, struct pid_result res) {
+    ctrl->last_u = res.u;
+    ctrl->prev_err2 = ctrl->prev_err;
+    ctrl->prev_err = res.err;
 }
 
 esp_err_t pid_control_init(void* storage, size_t storage_size, pid_control_handle* handle, const pid_control_config* config) {
-    if(!storage || !handle || !config) {
+    esp_err_t status = ESP_OK;
+    if(storage == NULL || handle == NULL || config == NULL) {
         #if CONFIG_PID_CONTROL_LOGGING
             ESP_LOGE(TAG, "Invalid argument: NULL pointer");
         #endif
-        return ESP_ERR_INVALID_ARG;
+        status = ESP_ERR_INVALID_ARG;
+    } else {
+        *handle = NULL;
     }
-    *handle = NULL;
 
-    const struct pid_req req = {
+    if(status == ESP_OK) {
+        const struct pid_req req = {
         .size = pid_control_storage_size(),
         .align = pid_control_storage_alignment()
-    };
-    esp_err_t err = pid_validate_storage(storage, storage_size, req);
-    if(err != ESP_OK) {
-        switch(err) {
-            case ESP_ERR_INVALID_SIZE:
-                #if CONFIG_PID_CONTROL_LOGGING
-                    ESP_LOGE(TAG, "Insufficient storage size: required %zu, provided %zu", req.size, storage_size);
-                #endif
-                return ESP_ERR_INVALID_SIZE;
-            case ESP_ERR_INVALID_ARG:
-                #if CONFIG_PID_CONTROL_LOGGING
-                    ESP_LOGE(TAG, "Storage pointer is not properly aligned: required alignment %zu", req.align);
-                #endif
-                return ESP_ERR_INVALID_ARG;
-            default:
-                #if CONFIG_PID_CONTROL_LOGGING
-                    ESP_LOGE(TAG, "Unexpected error in storage validation: %s", esp_err_to_name(err));
-                #endif
-                return err;
+        };
+        
+        status = pid_validate_storage(storage, storage_size, req);
+        if(status != ESP_OK) {
+            #if CONFIG_PID_CONTROL_LOGGING
+                ESP_LOGE(TAG, "Invalid argument: invalid storage (size or alignment)");
+            #endif
         }
     }
 
-    err = pid_validate_config(config);
-    if(err != ESP_OK) {
-        #if CONFIG_PID_CONTROL_LOGGING
-            ESP_LOGE(TAG, "Invalid argument: invalid PID configuration");
-        #endif
-        return err;
+    if(status == ESP_OK) {
+        status = pid_validate_config(config);
+        if(status != ESP_OK) {
+            #if CONFIG_PID_CONTROL_LOGGING
+                ESP_LOGE(TAG, "Invalid argument: invalid PID configuration");
+            #endif
+        }
     }
 
-    struct pid_control* ctrl = (struct pid_control*)storage;
-    pid_apply_config(ctrl, config);
+    if(status == ESP_OK) {
+        // MISRA C:2012 R11.5 deviation – converting void* storage to object pointer after validation.
+        struct pid_control* ctrl = storage;
+        pid_apply_config(ctrl, config);
 
-    *handle = ctrl;
-    return ESP_OK;
+        *handle = ctrl;
+    }
+
+    return status;
+}
+
+esp_err_t pid_control_update(pid_control_handle handle, float setpoint, float* u_out, float measurement) {
+    esp_err_t status = ESP_OK;
+    if(handle == NULL || u_out == NULL) {
+        #if CONFIG_PID_CONTROL_LOGGING
+            ESP_LOGE(TAG, "Invalid argument: NULL pointer");
+        #endif
+        status = ESP_ERR_INVALID_ARG;
+    }
+
+    if(status == ESP_OK) {
+        status = pid_validate_update_args(setpoint, measurement);
+        if(status != ESP_OK) {
+            #if CONFIG_PID_CONTROL_LOGGING
+                ESP_LOGE(TAG, "Invalid argument: invalid setpoint or measurement");
+            #endif
+        }
+    }
+
+    if(status == ESP_OK) {
+        struct pid_control* ctrl = handle;
+
+        struct pid_result res = pid_compute_incremental(ctrl, setpoint, measurement);
+        pid_commit_incremental(ctrl, res);
+
+        *u_out = res.u;
+    }
+
+    return status;
 }
