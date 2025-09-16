@@ -1,0 +1,10 @@
+menu "Low Pass Filter Configuration"
+
+    config LOW_PASS_FILTER_LOGGING
+        bool "Enable Low Pass Filter logging"
+        default false
+        help
+            Enable this option to log Low Pass Filter operations for debugging purposes.
+            Note that enabling logging may impact performance and increase memory usage.
+
+endmenu

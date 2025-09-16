@@ -1,6 +1,6 @@
 idf_component_register(SRCS "main.c"
                     INCLUDE_DIRS "."
-                    REQUIRES pid_control)
+                    REQUIRES esp-pid-control low-pass-filter)
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wall
