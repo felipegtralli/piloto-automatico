@@ -6,7 +6,7 @@
 
 #if CONFIG_LOW_PASS_FILTER_LOGGING
     #include "esp_log.h"
-    static const char TAG[] = "low-pass-filter"
+    static const char TAG[] = "low-pass-filter";
 #endif
 
 struct low_pass_filter {
@@ -66,13 +66,19 @@ static esp_err_t filter_validate_config(const low_pass_filter_config* config) {
 
 static void filter_apply_config(struct low_pass_filter* filter, const low_pass_filter_config* config) {
     static const float bilinear_factor = 2.0f;
+
     const float sampling_period = 1.0f / config->sampling_freq;
+    const float wc = bilinear_factor * (float)M_PI * config->cutoff_freq;
+
+    // prewarp arg: (wc * T / 2)
+    const float prewarp_arg = wc * (sampling_period / bilinear_factor);
+    const float wc_prewarp = (bilinear_factor / sampling_period) * tanf(prewarp_arg);
 
     // alpha = (2 - T*wc) / (2 + T*wc)
-    filter->alpha = (bilinear_factor - (sampling_period * config->cutoff_freq)) / (bilinear_factor + (sampling_period * config->cutoff_freq));
+    filter->alpha = (bilinear_factor - (sampling_period * wc_prewarp)) / (bilinear_factor + (sampling_period * wc_prewarp));
 
     // beta = (T*wc) / (2 + T*wc)
-    filter->beta = (sampling_period * config->cutoff_freq) / (bilinear_factor + (sampling_period * config->cutoff_freq));
+    filter->beta = (sampling_period * wc_prewarp) / (bilinear_factor + (sampling_period * wc_prewarp));
 
     filter->prev_output = 0.0f;
     filter->prev_read = 0.0f;
