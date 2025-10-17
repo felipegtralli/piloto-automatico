@@ -7,4 +7,12 @@ menu "Low Pass Filter Configuration"
             Enable this option to log Low Pass Filter operations for debugging purposes.
             Note that enabling logging may impact performance and increase memory usage.
 
+    config LOW_PASS_FILTER_IGNORE_APPLY_CHECKS
+        bool "Ignore arguments checks in low_pass_filter_apply()"
+        default false
+        help
+            Enable this option to skip argument validation in the low_pass_filter_apply() function.
+            This may improve performance but could lead to undefined behavior if invalid arguments are passed.
+            Should only be used in critical performance scenarios where the caller guarantees argument validity.
+
 endmenu

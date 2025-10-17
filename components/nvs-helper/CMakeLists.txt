@@ -1,3 +1,3 @@
 idf_component_register(SRCS "src/nvs_helper.c"
                     INCLUDE_DIRS "include"
-                    REQUIRES nvs_flash esp-pid-control low-pass-filter)
+                    REQUIRES nvs_flash esp-pid-control low-pass-filter motor driver)

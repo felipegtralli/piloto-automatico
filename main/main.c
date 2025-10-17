@@ -9,13 +9,19 @@
 #include "app_main.h"
 #include "low_pass_filter.h"
 #include "pid_control.h"
+#include "soc/gpio_num.h"
 #include "tasks.h"
 #include "nvs_helper.h"
+#include "motor.h"
 
 /* defines */
 #define TIMER_RESOLUTION_HZ 1000000U // 1 MHz
-#define SAMPLING_RATE_HZ 10U
+#define SAMPLING_RATE_HZ 100U
 #define TIMER_ALARM_COUNT (TIMER_RESOLUTION_HZ / SAMPLING_RATE_HZ)
+
+#define PWM_GROUP_ID 0
+#define PWM_RESOLUTION_HZ 10000000U // 10 MHz
+#define PWM_FREQUENCY_HZ 25000U      // 25 kHz
 
 /* variables */
 TaskHandle_t control_motor_a_task_handle = NULL;
@@ -34,7 +40,8 @@ static StaticTask_t control_motor_b_task_buffer;
 static void nvs_init(void);
 static void pid_init(pid_control_handle* handle, uint8_t* storage);
 static void lpf_init(low_pass_filter_handle* handle, uint8_t* storage);
-static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter, control_task_ctx* ctx);
+static void pwm_init_start(motor_handle* motor, uint8_t* storage, const char* nvs_gpio_key);
+static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter, motor_cmpr_reg* cmpr_reg, control_task_ctx* ctx);
 static void gptimer_init(void);
 
 void app_main(void) {
@@ -61,9 +68,25 @@ void app_main(void) {
     low_pass_filter_handle filter_motor_b = NULL;
     lpf_init(&filter_motor_b, filter_storage_motor_b);
 
+    // pwm setup
+    _Alignas(MOTOR_STORAGE_ALIGNMENT) static uint8_t motor_storage_a[MOTOR_STORAGE_SIZE];
+    _Alignas(MOTOR_STORAGE_ALIGNMENT) static uint8_t motor_storage_b[MOTOR_STORAGE_SIZE];
+
+    motor_handle motor_a = NULL;
+    pwm_init_start(&motor_a, motor_storage_a, NVS_MOTOR_A_GPIO_KEY);
+
+    motor_handle motor_b = NULL;
+    pwm_init_start(&motor_b, motor_storage_b, NVS_MOTOR_B_GPIO_KEY);
+
+    static motor_cmpr_reg motor_a_cmpr_reg = {0};
+    ESP_ERROR_CHECK(motor_get_cmpr_reg(motor_a, &motor_a_cmpr_reg));
+
+    static motor_cmpr_reg motor_b_cmpr_reg = {0};
+    ESP_ERROR_CHECK(motor_get_cmpr_reg(motor_b, &motor_b_cmpr_reg));
+
     // control task setup
-    ctrl_ctx_init(pid_motor_a, filter_motor_a, &control_task_ctx_motor_a);
-    ctrl_ctx_init(pid_motor_b, filter_motor_b, &control_task_ctx_motor_b);
+    ctrl_ctx_init(pid_motor_a, filter_motor_a, &motor_a_cmpr_reg, &control_task_ctx_motor_a);
+    ctrl_ctx_init(pid_motor_b, filter_motor_b, &motor_b_cmpr_reg, &control_task_ctx_motor_b);
 
     control_motor_a_task_handle = xTaskCreateStatic(control_task, CONTROL_TASK_A_NAME, CONTROL_TASK_STACK_SIZE, &control_task_ctx_motor_a, CONTROL_TASK_PRIORITY, control_motor_a_task_stack, &control_motor_a_task_buffer);
     control_motor_b_task_handle = xTaskCreateStatic(control_task, CONTROL_TASK_B_NAME, CONTROL_TASK_STACK_SIZE, &control_task_ctx_motor_b, CONTROL_TASK_PRIORITY, control_motor_b_task_stack, &control_motor_b_task_buffer);
@@ -95,10 +118,29 @@ static void lpf_init(low_pass_filter_handle* handle, uint8_t* storage) {
     ESP_ERROR_CHECK(low_pass_filter_init(storage, LOW_PASS_FILTER_STORAGE_SIZE, &filter_config, handle));
 }
 
-static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter, control_task_ctx* ctx) {
+static void pwm_init_start(motor_handle* motor, uint8_t* storage, const char* nvs_gpio_key) {
+    motor_gpio_config gpio_config = {0};
+    nvs_read_motor_gpio(nvs_gpio_key, &gpio_config);
+
+    motor_config motor_cfg = {
+        .gpio_config = gpio_config,
+        .pwm_config = {
+            .group_id = PWM_GROUP_ID,
+            .resolution_hz = PWM_RESOLUTION_HZ,
+            .pwm_frequency_hz = PWM_FREQUENCY_HZ,
+        },
+    };
+
+    ESP_ERROR_CHECK(motor_init(storage, MOTOR_STORAGE_SIZE, &motor_cfg, motor));
+    ESP_ERROR_CHECK(motor_pwm_enable_start(*motor));
+}
+
+static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter, motor_cmpr_reg* cmpr_reg, control_task_ctx* ctx) {
     ctx->pid = pid;
     ctx->filter = filter;
+    ctx->motor_cmpr_reg = cmpr_reg;
     ctx->setpoint = 50.0f; // hardcoded value for testing. replace with nvs read
+    ctx->pwm_max_ticks = (PWM_RESOLUTION_HZ / PWM_FREQUENCY_HZ) - 1U;
 }
 
 static void gptimer_init(void) {

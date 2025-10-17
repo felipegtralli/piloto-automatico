@@ -1,6 +1,6 @@
 idf_component_register(SRCS "main.c"
                     INCLUDE_DIRS "."
-                    REQUIRES esp-pid-control low-pass-filter tasks driver nvs-helper nvs_flash driver)
+                    REQUIRES esp-pid-control low-pass-filter tasks driver nvs-helper motor nvs_flash driver)
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wall

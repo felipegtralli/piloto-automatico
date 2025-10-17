@@ -85,6 +85,7 @@ static void filter_apply_config(struct low_pass_filter* filter, const low_pass_f
 }
 
 // apply helpers
+#if !CONFIG_LOW_PASS_FILTER_IGNORE_APPLY_CHECKS
 static esp_err_t filter_check_apply_input(float input) {
     if(!is_finite(input)) {
         return ESP_ERR_INVALID_ARG;
@@ -92,6 +93,7 @@ static esp_err_t filter_check_apply_input(float input) {
 
     return ESP_OK;
 }
+#endif // CONFIG_LOW_PASS_FILTER_IGNORE_APPLY_CHECKS
 
 // y[n] = alpha * y[n-1] + beta * (x[n] + x[n-1])
 static float filter_compute(const struct low_pass_filter* filter, float input) {
@@ -173,21 +175,26 @@ esp_err_t low_pass_filter_init(void* storage, size_t storage_size, const low_pas
 */
 esp_err_t low_pass_filter_apply(low_pass_filter_handle handle, float input, float* output) {
     esp_err_t status = ESP_OK;
-    if(handle == NULL || output == NULL) {
-        #if CONFIG_LOW_PASS_FILTER_LOGGING
-            ESP_LOGE(TAG, "Invalid argument: NULL pointer");
-        #endif
-        status = ESP_ERR_INVALID_ARG;
-    }
 
-    if(status == ESP_OK) {
-        status = filter_check_apply_input(input);
-        if(status != ESP_OK) {
+    #if !CONFIG_LOW_PASS_FILTER_IGNORE_APPLY_CHECKS
+
+        if(handle == NULL || output == NULL) {
             #if CONFIG_LOW_PASS_FILTER_LOGGING
-                ESP_LOGE(TAG, "Invalid argument: non-finite input");
+                ESP_LOGE(TAG, "Invalid argument: NULL pointer");
             #endif
+            status = ESP_ERR_INVALID_ARG;
         }
-    }
+
+        if(status == ESP_OK) {
+            status = filter_check_apply_input(input);
+            if(status != ESP_OK) {
+                #if CONFIG_LOW_PASS_FILTER_LOGGING
+                    ESP_LOGE(TAG, "Invalid argument: non-finite input");
+                #endif
+            }
+        }
+
+    #endif // CONFIG_LOW_PASS_FILTER_LOGGING
 
     if(status == ESP_OK) {
         struct low_pass_filter* filter = handle;

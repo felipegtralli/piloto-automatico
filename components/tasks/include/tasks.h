@@ -1,8 +1,10 @@
 #ifndef TASKS_H
 #define TASKS_H
 
+#include <stdint.h>
 #include <stdbool.h>
 #include "driver/gptimer_types.h"
+#include "motor.h"
 #include "pid_control.h"
 #include "low_pass_filter.h"
 
@@ -15,7 +17,9 @@
 typedef struct {
     pid_control_handle pid;
     low_pass_filter_handle filter;
+    motor_cmpr_reg* motor_cmpr_reg;
     float setpoint;
+    uint16_t pwm_max_ticks;
 } control_task_ctx;
 
 void control_task(void* pvParameters);
