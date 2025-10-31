@@ -35,6 +35,7 @@ typedef struct{
 } motor_cmpr_reg;
 
 esp_err_t motor_init(void* storage, size_t storage_size, const motor_config* config, motor_handle* handle);
+esp_err_t motor_free(motor_handle handle);
 esp_err_t motor_pwm_enable_start(motor_handle handle);
 esp_err_t motor_pwm_disable_stop(motor_handle handle);
 esp_err_t motor_get_cmpr_reg(motor_handle handle, motor_cmpr_reg* cmpr_reg);

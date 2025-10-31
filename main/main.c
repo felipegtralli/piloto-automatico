@@ -1,23 +1,31 @@
 /* includes */
 #include <stdint.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gptimer.h"
 #include "driver/gptimer_types.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "esp_wifi.h"
+#include "esp_wifi_default.h"
 #include "esp_err.h"
 #include "nvs_flash.h"
 #include "app_main.h"
 #include "low_pass_filter.h"
 #include "pid_control.h"
-#include "soc/gpio_num.h"
 #include "tasks.h"
 #include "nvs_helper.h"
 #include "motor.h"
+#include "wifi.h"
 
 /* defines */
 #define TIMER_RESOLUTION_HZ 1000000U // 1 MHz
 #define SAMPLING_RATE_HZ 100U
 #define TIMER_ALARM_COUNT (TIMER_RESOLUTION_HZ / SAMPLING_RATE_HZ)
+
+#define FILTER_CUTOFF_FREQ_HZ 10.0f
+#define FILTER_SAMPLING_FREQ_HZ (float)SAMPLING_RATE_HZ
 
 #define PWM_GROUP_ID 0
 #define PWM_RESOLUTION_HZ 10000000U // 10 MHz
@@ -36,12 +44,21 @@ static StaticTask_t control_motor_a_task_buffer;
 static StackType_t control_motor_b_task_stack[CONTROL_TASK_STACK_SIZE];
 static StaticTask_t control_motor_b_task_buffer;
 
+TaskHandle_t udp_task_handle = NULL;
+
+static udp_comm_task_ctx udp_task_ctx;
+
+static StackType_t udp_task_stack[UDP_TASK_STACK_SIZE];
+static StaticTask_t udp_task_buffer;
+
 /* function prototypes */
 static void nvs_init(void);
 static void pid_init(pid_control_handle* handle, uint8_t* storage);
 static void lpf_init(low_pass_filter_handle* handle, uint8_t* storage);
 static void pwm_init_start(motor_handle* motor, uint8_t* storage, const char* nvs_gpio_key);
-static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter, motor_cmpr_reg* cmpr_reg, control_task_ctx* ctx);
+static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter, motor_cmpr_reg* cmpr_reg, float setpoint, control_task_ctx* ctx);
+static void wifi_ap_init(wifi_config_t* wifi_config, wifi_ap_event_handler_ctx* event_handler_ctx);
+static void udp_ctx_init(udp_comm_task_ctx* ctx, control_task_ctx* ctrl_ctx_motor_a, control_task_ctx* ctrl_ctx_motor_b);
 static void gptimer_init(void);
 
 void app_main(void) {
@@ -85,11 +102,41 @@ void app_main(void) {
     ESP_ERROR_CHECK(motor_get_cmpr_reg(motor_b, &motor_b_cmpr_reg));
 
     // control task setup
-    ctrl_ctx_init(pid_motor_a, filter_motor_a, &motor_a_cmpr_reg, &control_task_ctx_motor_a);
-    ctrl_ctx_init(pid_motor_b, filter_motor_b, &motor_b_cmpr_reg, &control_task_ctx_motor_b);
+    float setpoint = 0.0f;
+    nvs_read_setpoint(NVS_SETPOINT_KEY, &setpoint);
+
+    ctrl_ctx_init(pid_motor_a, filter_motor_a, &motor_a_cmpr_reg, setpoint, &control_task_ctx_motor_a);
+    ctrl_ctx_init(pid_motor_b, filter_motor_b, &motor_b_cmpr_reg, setpoint, &control_task_ctx_motor_b);
 
     control_motor_a_task_handle = xTaskCreateStatic(control_task, CONTROL_TASK_A_NAME, CONTROL_TASK_STACK_SIZE, &control_task_ctx_motor_a, CONTROL_TASK_PRIORITY, control_motor_a_task_stack, &control_motor_a_task_buffer);
     control_motor_b_task_handle = xTaskCreateStatic(control_task, CONTROL_TASK_B_NAME, CONTROL_TASK_STACK_SIZE, &control_task_ctx_motor_b, CONTROL_TASK_PRIORITY, control_motor_b_task_stack, &control_motor_b_task_buffer);
+
+    // wifi setup
+    static wifi_ap_event_handler_ctx wifi_ap_ehandler_ctx = {
+        .station_connected = false,
+    };
+    wifi_config_t wifi_config = {
+        .ap = {
+            .ssid = WIFI_AP_SSID,
+            .ssid_len = strlen(WIFI_AP_SSID),
+            .password = WIFI_AP_PASSWORD,
+            .channel = WIFI_AP_CHANNEL,
+            .max_connection = WIFI_AP_MAX_CONNECTIONS,
+            .authmode = WIFI_AUTH_WPA2_PSK,
+            .pmf_cfg = {
+                .required = true,
+            }
+        }
+    };
+    wifi_ap_init(&wifi_config, &wifi_ap_ehandler_ctx);
+
+    // udp task setup
+    udp_ctx_init(&udp_task_ctx, &control_task_ctx_motor_a, &control_task_ctx_motor_b);
+
+    udp_task_handle = xTaskCreateStatic(udp_comm_task, UDP_TASK_NAME, UDP_TASK_STACK_SIZE, &udp_task_ctx, UDP_TASK_PRIORITY, udp_task_stack, &udp_task_buffer);
+    if(!wifi_ap_ehandler_ctx.station_connected) {
+        vTaskSuspend(udp_task_handle);
+    }
 
     // gptimer setup
     gptimer_init();
@@ -112,8 +159,10 @@ static void pid_init(pid_control_handle* handle, uint8_t* storage) {
 }
 
 static void lpf_init(low_pass_filter_handle* handle, uint8_t* storage) {
-    low_pass_filter_config filter_config = {0};
-    nvs_read_filter_config(NVS_FILTER_CONFIG_KEY, &filter_config);
+    low_pass_filter_config filter_config = {
+        .cutoff_freq = FILTER_CUTOFF_FREQ_HZ,
+        .sampling_freq = FILTER_SAMPLING_FREQ_HZ,
+    };
 
     ESP_ERROR_CHECK(low_pass_filter_init(storage, LOW_PASS_FILTER_STORAGE_SIZE, &filter_config, handle));
 }
@@ -135,12 +184,34 @@ static void pwm_init_start(motor_handle* motor, uint8_t* storage, const char* nv
     ESP_ERROR_CHECK(motor_pwm_enable_start(*motor));
 }
 
-static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter, motor_cmpr_reg* cmpr_reg, control_task_ctx* ctx) {
+static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter, motor_cmpr_reg* cmpr_reg, float setpoint, control_task_ctx* ctx) {
     ctx->pid = pid;
     ctx->filter = filter;
     ctx->motor_cmpr_reg = cmpr_reg;
-    ctx->setpoint = 50.0f; // hardcoded value for testing. replace with nvs read
+    ctx->setpoint = setpoint;
     ctx->pwm_max_ticks = (PWM_RESOLUTION_HZ / PWM_FREQUENCY_HZ) - 1U;
+    memcpy(&ctx->mutex, &(portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED, sizeof(portMUX_TYPE));
+}
+
+static void wifi_ap_init(wifi_config_t* wifi_config, wifi_ap_event_handler_ctx* event_handler_ctx) {
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    (void)esp_netif_create_default_wifi_ap();
+
+    wifi_init_config_t wifi_init_config = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&wifi_init_config));
+
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, event_handler_ctx, NULL));
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
+}
+
+static void udp_ctx_init(udp_comm_task_ctx* ctx, control_task_ctx* ctrl_ctx_motor_a, control_task_ctx* ctrl_ctx_motor_b) {
+    ctx->first_exchange = true;
+    ctx->control_ctx_motor_a = ctrl_ctx_motor_a;
+    ctx->control_ctx_motor_b = ctrl_ctx_motor_b;
 }
 
 static void gptimer_init(void) {

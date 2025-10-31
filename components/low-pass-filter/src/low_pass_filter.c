@@ -9,6 +9,9 @@
     static const char TAG[] = "low-pass-filter";
 #endif
 
+#define BILINEAR_FACTOR 2.0f
+#define NYQUIST_FACTOR 2.0f
+
 struct low_pass_filter {
     float alpha;
     float beta;
@@ -46,8 +49,6 @@ static esp_err_t filter_validate_storage(const void* storage, size_t storage_siz
 }
 
 static esp_err_t filter_validate_config(const low_pass_filter_config* config) {
-    static const float nyquist_factor = 2.0f;
-
     if(!is_finite(config->cutoff_freq) || !is_finite(config->sampling_freq)) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -56,7 +57,7 @@ static esp_err_t filter_validate_config(const low_pass_filter_config* config) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    bool nyquist_crit = (config->sampling_freq > nyquist_factor * config->cutoff_freq);
+    bool nyquist_crit = (config->sampling_freq > NYQUIST_FACTOR * config->cutoff_freq);
     if(!nyquist_crit) {
         return ESP_FAIL;
     }
@@ -65,20 +66,18 @@ static esp_err_t filter_validate_config(const low_pass_filter_config* config) {
 }
 
 static void filter_apply_config(struct low_pass_filter* filter, const low_pass_filter_config* config) {
-    static const float bilinear_factor = 2.0f;
-
     const float sampling_period = 1.0f / config->sampling_freq;
-    const float wc = bilinear_factor * (float)M_PI * config->cutoff_freq;
+    const float wc = BILINEAR_FACTOR * (float)M_PI * config->cutoff_freq;
 
     // prewarp arg: (wc * T / 2)
-    const float prewarp_arg = wc * (sampling_period / bilinear_factor);
-    const float wc_prewarp = (bilinear_factor / sampling_period) * tanf(prewarp_arg);
+    const float prewarp_arg = wc * (sampling_period / BILINEAR_FACTOR);
+    const float wc_prewarp = (BILINEAR_FACTOR / sampling_period) * tanf(prewarp_arg);
 
     // alpha = (2 - T*wc) / (2 + T*wc)
-    filter->alpha = (bilinear_factor - (sampling_period * wc_prewarp)) / (bilinear_factor + (sampling_period * wc_prewarp));
+    filter->alpha = (BILINEAR_FACTOR - (sampling_period * wc_prewarp)) / (BILINEAR_FACTOR + (sampling_period * wc_prewarp));
 
     // beta = (T*wc) / (2 + T*wc)
-    filter->beta = (sampling_period * wc_prewarp) / (bilinear_factor + (sampling_period * wc_prewarp));
+    filter->beta = (sampling_period * wc_prewarp) / (BILINEAR_FACTOR + (sampling_period * wc_prewarp));
 
     filter->prev_output = 0.0f;
     filter->prev_read = 0.0f;

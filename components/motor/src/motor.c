@@ -255,6 +255,29 @@ esp_err_t motor_init(void* storage, size_t storage_size, const motor_config* con
     return status;
 }
 
+esp_err_t motor_free(motor_handle handle) {
+    esp_err_t status = ESP_OK;
+
+    struct motor* motor = NULL;
+    if(handle == NULL) {
+        status = ESP_ERR_INVALID_ARG;
+        if(status != ESP_OK) {
+            ESP_LOGE(TAG, "Invalid argument");
+        }
+    } else {
+        motor = handle;
+    }
+
+    if(status == ESP_OK) {
+        motor_cleanup(motor);
+        handle = NULL;
+        
+        ESP_LOGI(TAG, "Motor resources freed");
+    }
+
+    return status;
+}
+
 esp_err_t motor_pwm_enable_start(motor_handle handle) {
     esp_err_t status = ESP_OK;
 
