@@ -29,22 +29,11 @@
 
 #define PWM_GROUP_ID 0
 #define PWM_RESOLUTION_HZ 10000000U // 10 MHz
-#define PWM_FREQUENCY_HZ 25000U      // 25 kHz
+#define PWM_FREQUENCY_HZ 25000U // 25 kHz
 
 /* variables */
 TaskHandle_t ctrl_task_handle = NULL;
-
-static control_task_ctx ctrl_task_ctx;
-
-static StackType_t ctrl_task_stack[CONTROL_TASK_STACK_SIZE];
-static StaticTask_t ctrl_task_buffer;
-
 TaskHandle_t udp_task_handle = NULL;
-
-static udp_comm_task_ctx udp_task_ctx;
-
-static StackType_t udp_task_stack[UDP_TASK_STACK_SIZE];
-static StaticTask_t udp_task_buffer;
 
 /* function prototypes */
 static void nvs_init(void);
@@ -52,7 +41,7 @@ static void pid_init(pid_control_handle* handle, uint8_t* storage);
 static void lpf_init(low_pass_filter_handle* handle, uint8_t* storage);
 static void pwm_init_start(motor_handle* motor, uint8_t* storage);
 static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter, motor_cmpr_reg* cmpr_reg, float setpoint, control_task_ctx* ctx);
-static void wifi_ap_init(wifi_config_t* wifi_config, wifi_ap_event_handler_ctx* event_handler_ctx);
+static void wifi_ap_init(wifi_ap_event_handler_ctx* event_handler_ctx);
 static void udp_ctx_init(udp_comm_task_ctx* ctx, control_task_ctx* ctrl_ctx);
 static void gptimer_init(void);
 
@@ -61,19 +50,19 @@ void app_main(void) {
     nvs_init();
 
     // pid controller setup
-    _Alignas(PID_CONTROL_STORAGE_ALIGNMENT) static uint8_t pid_storage[PID_CONTROL_STORAGE_SIZE];
+    _Alignas(PID_CONTROL_STORAGE_ALIGNMENT) static uint8_t pid_storage[PID_CONTROL_STORAGE_SIZE] = {0};
 
     pid_control_handle pid = NULL;
     pid_init(&pid, pid_storage);
 
     // low pass filter setup
-    _Alignas(LOW_PASS_FILTER_STORAGE_ALIGNMENT) static uint8_t filter_storage[LOW_PASS_FILTER_STORAGE_SIZE];
+    _Alignas(LOW_PASS_FILTER_STORAGE_ALIGNMENT) static uint8_t filter_storage[LOW_PASS_FILTER_STORAGE_SIZE] = {0};
 
     low_pass_filter_handle filter = NULL;
     lpf_init(&filter, filter_storage);
 
     // pwm setup
-    _Alignas(MOTOR_STORAGE_ALIGNMENT) static uint8_t motor_storage[MOTOR_STORAGE_SIZE];
+    _Alignas(MOTOR_STORAGE_ALIGNMENT) static uint8_t motor_storage[MOTOR_STORAGE_SIZE] = {0};
 
     motor_handle motor = NULL;
     pwm_init_start(&motor, motor_storage);
@@ -85,31 +74,25 @@ void app_main(void) {
     static float setpoint = 0.0f;
     nvs_read_setpoint(NVS_SETPOINT_KEY, &setpoint);
 
+    static control_task_ctx ctrl_task_ctx = {0};
     ctrl_ctx_init(pid, filter, &motor_reg, setpoint, &ctrl_task_ctx);
+
+    static StackType_t ctrl_task_stack[CONTROL_TASK_STACK_SIZE];
+    static StaticTask_t ctrl_task_buffer;
     ctrl_task_handle = xTaskCreateStatic(control_task, CONTROL_TASK_NAME, CONTROL_TASK_STACK_SIZE, &ctrl_task_ctx, CONTROL_TASK_PRIORITY, ctrl_task_stack, &ctrl_task_buffer);
 
     // wifi setup
     static wifi_ap_event_handler_ctx wifi_ap_ehandler_ctx = {
         .station_connected = false,
     };
-    wifi_config_t wifi_config = {
-        .ap = {
-            .ssid = WIFI_AP_SSID,
-            .ssid_len = strlen(WIFI_AP_SSID),
-            .password = WIFI_AP_PASSWORD,
-            .channel = WIFI_AP_CHANNEL,
-            .max_connection = WIFI_AP_MAX_CONNECTIONS,
-            .authmode = WIFI_AUTH_WPA2_PSK,
-            .pmf_cfg = {
-                .required = true,
-            }
-        }
-    };
-    wifi_ap_init(&wifi_config, &wifi_ap_ehandler_ctx);
+    wifi_ap_init(&wifi_ap_ehandler_ctx);
 
     // udp task setup
+    static udp_comm_task_ctx udp_task_ctx = {0};
     udp_ctx_init(&udp_task_ctx, &ctrl_task_ctx);
 
+    static StackType_t udp_task_stack[UDP_TASK_STACK_SIZE];
+    static StaticTask_t udp_task_buffer;
     udp_task_handle = xTaskCreateStatic(udp_comm_task, UDP_TASK_NAME, UDP_TASK_STACK_SIZE, &udp_task_ctx, UDP_TASK_PRIORITY, udp_task_stack, &udp_task_buffer);
     if(!wifi_ap_ehandler_ctx.station_connected) {
         vTaskSuspend(udp_task_handle);
@@ -130,7 +113,7 @@ static void nvs_init(void) {
 
 static void pid_init(pid_control_handle* handle, uint8_t* storage) {
     pid_control_config pid_config = {0};
-    nvs_read_pid_config(NVS_PID_CONFIG_KEY, &pid_config);
+    ESP_ERROR_CHECK(nvs_read_pid_config(NVS_PID_CONFIG_KEY, &pid_config));
 
     ESP_ERROR_CHECK(pid_control_init(storage, PID_CONTROL_STORAGE_SIZE, handle, &pid_config));
 }
@@ -146,7 +129,7 @@ static void lpf_init(low_pass_filter_handle* handle, uint8_t* storage) {
 
 static void pwm_init_start(motor_handle* motor, uint8_t* storage) {
     motor_gpio_config gpio_config = {0};
-    nvs_read_motor_gpio(NVS_MOTOR_GPIO_KEY, &gpio_config);
+    ESP_ERROR_CHECK(nvs_read_motor_gpio(NVS_MOTOR_GPIO_KEY, &gpio_config));
 
     const motor_config motor_cfg = {
         .gpio_config = gpio_config,
@@ -167,10 +150,10 @@ static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter,
     ctx->motor_cmpr_reg = cmpr_reg;
     ctx->setpoint = setpoint;
     ctx->pwm_max_ticks = (PWM_RESOLUTION_HZ / PWM_FREQUENCY_HZ) - 1U;
-    memcpy(&ctx->mutex, &(portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED, sizeof(portMUX_TYPE));
+    (void)memcpy(&ctx->mutex, &(portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED, sizeof(portMUX_TYPE));
 }
 
-static void wifi_ap_init(wifi_config_t* wifi_config, wifi_ap_event_handler_ctx* event_handler_ctx) {
+static void wifi_ap_init(wifi_ap_event_handler_ctx* event_handler_ctx) {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     (void)esp_netif_create_default_wifi_ap();
@@ -180,8 +163,21 @@ static void wifi_ap_init(wifi_config_t* wifi_config, wifi_ap_event_handler_ctx* 
 
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, event_handler_ctx, NULL));
 
+    wifi_config_t wifi_config = {
+        .ap = {
+            .ssid = WIFI_AP_SSID,
+            .ssid_len = strlen(WIFI_AP_SSID),
+            .password = WIFI_AP_PASSWORD,
+            .channel = WIFI_AP_CHANNEL,
+            .max_connection = WIFI_AP_MAX_CONNECTIONS,
+            .authmode = WIFI_AUTH_WPA2_PSK,
+            .pmf_cfg = {
+                .required = true,
+            }
+        }
+    };
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 }
 
@@ -192,21 +188,21 @@ static void udp_ctx_init(udp_comm_task_ctx* ctx, control_task_ctx* ctrl_ctx) {
 
 static void gptimer_init(void) {
     gptimer_handle_t timer = NULL;
-    gptimer_config_t timer_config = {
+    const gptimer_config_t timer_config = {
         .clk_src = GPTIMER_CLK_SRC_DEFAULT,
         .direction = GPTIMER_COUNT_UP,
         .resolution_hz = TIMER_RESOLUTION_HZ,
     };
     ESP_ERROR_CHECK(gptimer_new_timer(&timer_config, &timer));
 
-    gptimer_alarm_config_t alarm_config = {
+    const gptimer_alarm_config_t alarm_config = {
         .alarm_count = TIMER_ALARM_COUNT,
         .reload_count = 0,
         .flags.auto_reload_on_alarm = true,
     };
     ESP_ERROR_CHECK(gptimer_set_alarm_action(timer, &alarm_config));
 
-    gptimer_event_callbacks_t timer_callback = {
+    const gptimer_event_callbacks_t timer_callback = {
         .on_alarm = control_task_notify_isr,
     };
     ESP_ERROR_CHECK(gptimer_register_event_callbacks(timer, &timer_callback, NULL));
