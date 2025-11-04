@@ -1,5 +1,5 @@
-#ifndef TASKS_H
-#define TASKS_H
+#ifndef __TASKS_H__
+#define __TASKS_H__
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -9,13 +9,13 @@
 #include "pid_control.h"
 #include "low_pass_filter.h"
 
-#define CONTROL_TASK_STACK_SIZE 2048
-#define CONTROL_TASK_PRIORITY 5
+#define CONTROL_TASK_STACK_SIZE 2048U
+#define CONTROL_TASK_PRIORITY 5U
 
 #define CONTROL_TASK_NAME "control_motor_task"
 
-#define UDP_TASK_STACK_SIZE 2048 * 2
-#define UDP_TASK_PRIORITY 1
+#define UDP_TASK_STACK_SIZE (2048U * 2U)
+#define UDP_TASK_PRIORITY 1U
 
 #define UDP_TASK_NAME "udp_comm_task"
 
@@ -38,4 +38,4 @@ bool control_task_notify_isr(gptimer_handle_t timer, const gptimer_alarm_event_d
 
 void udp_comm_task(void* pvParameters);
 
-#endif // TASKS_H
+#endif // __TASKS_H__

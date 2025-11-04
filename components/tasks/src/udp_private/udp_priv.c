@@ -1,23 +1,23 @@
-#include "udp_priv.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
-#include "esp_err.h"
 #include "freertos/idf_additions.h"
+#include "esp_err.h"
+#include "udp_priv.h"
 #include "tasks.h"
 #include "low_pass_filter.h"
 #include "pid_control.h"
 #include "nvs_helper.h"
 
-#define CMD_LEN 1
+#define CMD_LEN 1U
 
-#define GET_CMD_OFFSET 1
-#define SET_CMD_OFFSET 2
+#define GET_CMD_OFFSET 1U
+#define SET_CMD_OFFSET 2U
 
-#define SET_SETPOINT_RX_BUF_LEN 6
-#define SET_PID_GAINS_RX_BUF_LEN 17
-#define SET_PID_AW_RX_BUF_LEN 6
-#define SET_PID_OUTPUT_LIMITS_RX_BUF_LEN 10
+#define SET_SETPOINT_RX_BUF_LEN 6U
+#define SET_PID_GAINS_RX_BUF_LEN 17U
+#define SET_PID_AW_RX_BUF_LEN 6U
+#define SET_PID_OUTPUT_LIMITS_RX_BUF_LEN 10U
 
 /*
  tx ack format:
@@ -26,7 +26,7 @@
 static void build_ack(uint8_t* tx_buffer, size_t* tx_len, udp_command cmd, bool success) {
     tx_buffer[0] = (uint8_t)cmd;
     tx_buffer[1] = success ? 0xFF : 0x00; // ack
-    *tx_len = 2;
+    *tx_len = 2U;
 }
 
 /*
@@ -57,8 +57,8 @@ static void handle_get_pid_gains(uint8_t* tx_buffer, size_t* tx_len, float kp, f
 
     memcpy(&tx_buffer[GET_CMD_OFFSET], &kp, sizeof(float));
     memcpy(&tx_buffer[GET_CMD_OFFSET + sizeof(float)], &ki, sizeof(float));
-    memcpy(&tx_buffer[GET_CMD_OFFSET + 2 * sizeof(float)], &kd, sizeof(float));
-    *tx_len = CMD_LEN + 3 * sizeof(float);
+    memcpy(&tx_buffer[GET_CMD_OFFSET + 2U * sizeof(float)], &kd, sizeof(float));
+    *tx_len = CMD_LEN + 3U * sizeof(float);
 }
 
 /*
@@ -81,7 +81,7 @@ static void handle_get_pid_output_limits(uint8_t* tx_buffer, size_t* tx_len, flo
 
     memcpy(&tx_buffer[GET_CMD_OFFSET], &u_min, sizeof(float));
     memcpy(&tx_buffer[GET_CMD_OFFSET + sizeof(float)], &u_max, sizeof(float));
-    *tx_len = CMD_LEN + 2 * sizeof(float);
+    *tx_len = CMD_LEN + 2U * sizeof(float);
 }
 
 /*
@@ -93,7 +93,7 @@ static void handle_get_lpf_state(uint8_t* tx_buffer, size_t* tx_len, float prev_
 
     memcpy(&tx_buffer[GET_CMD_OFFSET], &prev_output, sizeof(float));
     memcpy(&tx_buffer[GET_CMD_OFFSET + sizeof(float)], &prev_read, sizeof(float));
-    *tx_len = CMD_LEN + 2 * sizeof(float);
+    *tx_len = CMD_LEN + 2U * sizeof(float);
 }
 
 /*
@@ -145,7 +145,7 @@ static void handle_set_pid_gains(const uint8_t* rx_buffer, size_t rx_len, uint8_
     if(status == ESP_OK) {
         memcpy(&new_kp, &rx_buffer[SET_CMD_OFFSET], sizeof(float));
         memcpy(&new_ki, &rx_buffer[SET_CMD_OFFSET + sizeof(float)], sizeof(float));
-        memcpy(&new_kd, &rx_buffer[SET_CMD_OFFSET + 2 * sizeof(float)], sizeof(float));
+        memcpy(&new_kd, &rx_buffer[SET_CMD_OFFSET + 2U * sizeof(float)], sizeof(float));
 
         taskENTER_CRITICAL(&ctrl_ctx->mutex);
         status = pid_control_set_gains(ctrl_ctx->pid, true, new_kp, new_ki, new_kd);

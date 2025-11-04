@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/task.h"
@@ -6,7 +7,6 @@
 #include "tasks.h"
 #include "pid_control.h"
 #include "low_pass_filter.h"
-#include <stdint.h>
 
 extern TaskHandle_t ctrl_task_handle;
 

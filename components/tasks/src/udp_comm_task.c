@@ -1,7 +1,7 @@
+#include <stdint.h>
 #include "lwip/arch.h"
 #include "tasks.h"
 #include "wifi.h"
-#include <stdint.h>
 #include "udp_private/udp_priv.h"
 
 void udp_comm_task(void* pvParameters) {
