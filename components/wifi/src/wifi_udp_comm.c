@@ -1,10 +1,10 @@
+#include <stdint.h>
 #include "freertos/FreeRTOS.h"
 #include "lwip/arch.h"
 #include "lwip/sockets.h"
 #include "wifi.h"
-#include <stdint.h>
 
-#define UDP_CLIENT_PORT 12345
+#define UDP_CLIENT_PORT 12345U
 
 static struct sockaddr_in dest_addr = {
     .sin_addr.s_addr = 0,
