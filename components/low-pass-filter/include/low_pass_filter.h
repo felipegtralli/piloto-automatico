@@ -1,7 +1,7 @@
-#ifndef LOW_PASS_FILTER_H
-#define LOW_PASS_FILTER_H
+#ifndef __LOW_PASS_FILTER_H__
+#define __LOW_PASS_FILTER_H__
 
-#define LOW_PASS_FILTER_STORAGE_SIZE 24u
+#define LOW_PASS_FILTER_STORAGE_SIZE 16u
 #define LOW_PASS_FILTER_STORAGE_ALIGNMENT 4u
 
 #include <stddef.h>
@@ -24,4 +24,4 @@ esp_err_t low_pass_filter_apply(low_pass_filter_handle handle, float input, floa
 esp_err_t low_pass_filter_reset_state(low_pass_filter_handle handle);
 esp_err_t low_pass_filter_get_state(low_pass_filter_handle handle, float* prev_output, float* prev_read);
 
-#endif // LOW_PASS_FILTER_H
+#endif // __LOW_PASS_FILTER_H__

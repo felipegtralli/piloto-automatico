@@ -1,11 +1,11 @@
-#ifndef MOTOR_H
-#define MOTOR_H
+#ifndef __MOTOR_H__
+#define __MOTOR_H__
 
+#include <stdint.h>
+#include <stddef.h>
 #include "esp_err.h"
 #include "soc/gpio_num.h"
 #include "soc/mcpwm_struct.h"
-#include <stdint.h>
-#include <stddef.h>
 
 #define MOTOR_STORAGE_SIZE 32u
 #define MOTOR_STORAGE_ALIGNMENT 4u
@@ -40,4 +40,4 @@ esp_err_t motor_pwm_enable_start(motor_handle handle);
 esp_err_t motor_pwm_disable_stop(motor_handle handle);
 esp_err_t motor_get_cmpr_reg(motor_handle handle, motor_cmpr_reg* cmpr_reg);
 
-#endif // MOTOR_H
+#endif // __MOTOR_H__

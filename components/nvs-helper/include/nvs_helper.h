@@ -1,5 +1,5 @@
-#ifndef NVS_HELPER_H
-#define NVS_HELPER_H
+#ifndef __NVS_HELPER_H__
+#define __NVS_HELPER_H__
 
 #include "esp_err.h"
 #include "motor.h"
@@ -19,4 +19,4 @@ esp_err_t nvs_write_pid_config(const char* key, const pid_control_config* config
 esp_err_t nvs_write_motor_gpio(const char* key, const motor_gpio_config* config);
 esp_err_t nvs_write_setpoint(const char* key, const float* setpoint);
 
-#endif // NVS_HELPER_H
+#endif // __NVS_HELPER_H__

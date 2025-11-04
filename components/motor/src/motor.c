@@ -1,4 +1,4 @@
-#include "motor.h"
+#include <stdint.h>
 #include "driver/mcpwm_cmpr.h"
 #include "driver/mcpwm_gen.h"
 #include "driver/mcpwm_oper.h"
@@ -10,7 +10,7 @@
 #include "soc/clk_tree_defs.h"
 #include "soc/gpio_num.h"
 #include "soc/mcpwm_struct.h"
-#include <stdint.h>
+#include "motor.h"
 
 static const char TAG[] = "motor";
 
