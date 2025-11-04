@@ -7,8 +7,7 @@
 
 #define NVS_PID_CONFIG_KEY "pid_config"
 
-#define NVS_MOTOR_A_GPIO_KEY "motor_a_gpio_config"
-#define NVS_MOTOR_B_GPIO_KEY "motor_b_gpio_config"
+#define NVS_MOTOR_GPIO_KEY "motor_gpio_config"
 
 #define NVS_SETPOINT_KEY "setpoint"
 

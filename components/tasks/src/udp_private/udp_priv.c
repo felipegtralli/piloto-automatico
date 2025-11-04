@@ -103,7 +103,7 @@ static void handle_get_lpf_state(uint8_t* tx_buffer, size_t* tx_len, float prev_
  tx set setpoint format:
     [command (1 byte)] [ack (1 byte)]
 */
-static void handle_set_setpoint(const uint8_t* rx_buffer, size_t rx_len, uint8_t* tx_buffer, size_t* tx_len, control_task_ctx* ctrl_ctx_a, control_task_ctx* ctrl_ctx_b) {
+static void handle_set_setpoint(const uint8_t* rx_buffer, size_t rx_len, uint8_t* tx_buffer, size_t* tx_len, control_task_ctx* ctrl_ctx) {
     esp_err_t status = ESP_OK;
     if(rx_len < SET_SETPOINT_RX_BUF_LEN) {
         status = ESP_ERR_INVALID_SIZE;
@@ -113,13 +113,9 @@ static void handle_set_setpoint(const uint8_t* rx_buffer, size_t rx_len, uint8_t
     if(status == ESP_OK) {
         memcpy(&new_setpoint, &rx_buffer[SET_CMD_OFFSET], sizeof(float));
         
-        taskENTER_CRITICAL(&ctrl_ctx_a->mutex);
-        ctrl_ctx_a->setpoint = new_setpoint;
-        taskEXIT_CRITICAL(&ctrl_ctx_a->mutex);
-
-        taskENTER_CRITICAL(&ctrl_ctx_b->mutex);
-        ctrl_ctx_b->setpoint = new_setpoint;
-        taskEXIT_CRITICAL(&ctrl_ctx_b->mutex);
+        taskENTER_CRITICAL(&ctrl_ctx->mutex);
+        ctrl_ctx->setpoint = new_setpoint;
+        taskEXIT_CRITICAL(&ctrl_ctx->mutex);
     }
 
     if(status == ESP_OK) {
@@ -137,7 +133,7 @@ static void handle_set_setpoint(const uint8_t* rx_buffer, size_t rx_len, uint8_t
  tx set pid gains format:
     [command (1 byte)] [ack (1 byte)]
 */
-static void handle_set_pid_gains(const uint8_t* rx_buffer, size_t rx_len, uint8_t* tx_buffer, size_t* tx_len, control_task_ctx* ctrl_ctx_a, control_task_ctx* ctrl_ctx_b) {
+static void handle_set_pid_gains(const uint8_t* rx_buffer, size_t rx_len, uint8_t* tx_buffer, size_t* tx_len, control_task_ctx* ctrl_ctx) {
     esp_err_t status = ESP_OK;
     if(rx_len < SET_PID_GAINS_RX_BUF_LEN) {
         status = ESP_ERR_INVALID_SIZE;
@@ -151,21 +147,14 @@ static void handle_set_pid_gains(const uint8_t* rx_buffer, size_t rx_len, uint8_
         memcpy(&new_ki, &rx_buffer[SET_CMD_OFFSET + sizeof(float)], sizeof(float));
         memcpy(&new_kd, &rx_buffer[SET_CMD_OFFSET + 2 * sizeof(float)], sizeof(float));
 
-        taskENTER_CRITICAL(&ctrl_ctx_a->mutex);
-        esp_err_t err_a = pid_control_set_gains(ctrl_ctx_a->pid, true, new_kp, new_ki, new_kd);
-        taskEXIT_CRITICAL(&ctrl_ctx_a->mutex);
-
-        taskENTER_CRITICAL(&ctrl_ctx_b->mutex);
-        esp_err_t err_b = pid_control_set_gains(ctrl_ctx_b->pid, true, new_kp, new_ki, new_kd);
-        taskEXIT_CRITICAL(&ctrl_ctx_b->mutex);
-        if(err_a != ESP_OK || err_b != ESP_OK) {
-            status = ESP_FAIL;
-        }
+        taskENTER_CRITICAL(&ctrl_ctx->mutex);
+        status = pid_control_set_gains(ctrl_ctx->pid, true, new_kp, new_ki, new_kd);
+        taskEXIT_CRITICAL(&ctrl_ctx->mutex);
     }
 
     if(status == ESP_OK) {
         pid_control_config config = {0};
-        status = pid_control_get_config(ctrl_ctx_a->pid, &config);
+        status = pid_control_get_config(ctrl_ctx->pid, &config);
 
         if(status == ESP_OK) {
             config.kp = new_kp;
@@ -187,7 +176,7 @@ static void handle_set_pid_gains(const uint8_t* rx_buffer, size_t rx_len, uint8_
  tx set pid anti-windup format:
     [command (1 byte)] [ack (1 byte)]
 */
-static void handle_set_pid_aw(const uint8_t* rx_buffer, size_t rx_len, uint8_t* tx_buffer, size_t* tx_len, control_task_ctx* ctrl_ctx_a, control_task_ctx* ctrl_ctx_b) {
+static void handle_set_pid_aw(const uint8_t* rx_buffer, size_t rx_len, uint8_t* tx_buffer, size_t* tx_len, control_task_ctx* ctrl_ctx) {
     esp_err_t status = ESP_OK;
     if(rx_len < SET_PID_AW_RX_BUF_LEN) {
         status = ESP_ERR_INVALID_SIZE;
@@ -197,22 +186,14 @@ static void handle_set_pid_aw(const uint8_t* rx_buffer, size_t rx_len, uint8_t* 
     if(status == ESP_OK) {
         memcpy(&new_kaw, &rx_buffer[SET_CMD_OFFSET], sizeof(float));
 
-        taskENTER_CRITICAL(&ctrl_ctx_a->mutex);
-        esp_err_t err_a = pid_control_set_anti_windup(ctrl_ctx_a->pid, new_kaw);
-        taskEXIT_CRITICAL(&ctrl_ctx_a->mutex);
-
-        taskENTER_CRITICAL(&ctrl_ctx_b->mutex);
-        esp_err_t err_b = pid_control_set_anti_windup(ctrl_ctx_b->pid, new_kaw);
-        taskEXIT_CRITICAL(&ctrl_ctx_b->mutex);
-
-        if(err_a != ESP_OK || err_b != ESP_OK) {
-            status = ESP_FAIL;
-        }
+        taskENTER_CRITICAL(&ctrl_ctx->mutex);
+        status = pid_control_set_anti_windup(ctrl_ctx->pid, new_kaw);
+        taskEXIT_CRITICAL(&ctrl_ctx->mutex);
     }
 
     if(status == ESP_OK) {
         pid_control_config config = {0};
-        status = pid_control_get_config(ctrl_ctx_a->pid, &config);
+        status = pid_control_get_config(ctrl_ctx->pid, &config);
 
         if(status == ESP_OK) {
             config.kaw = new_kaw;
@@ -232,7 +213,7 @@ static void handle_set_pid_aw(const uint8_t* rx_buffer, size_t rx_len, uint8_t* 
  tx set pid output limits format:
     [command (1 byte)] [ack (1 byte)]
 */
-static void handle_set_pid_output_limits(const uint8_t* rx_buffer, size_t rx_len, uint8_t* tx_buffer, size_t* tx_len, control_task_ctx* ctrl_ctx_a, control_task_ctx* ctrl_ctx_b) {
+static void handle_set_pid_output_limits(const uint8_t* rx_buffer, size_t rx_len, uint8_t* tx_buffer, size_t* tx_len, control_task_ctx* ctrl_ctx) {
     esp_err_t status = ESP_OK;
     if(rx_len < SET_PID_OUTPUT_LIMITS_RX_BUF_LEN) {
         status = ESP_ERR_INVALID_SIZE;
@@ -244,22 +225,14 @@ static void handle_set_pid_output_limits(const uint8_t* rx_buffer, size_t rx_len
         memcpy(&new_u_min, &rx_buffer[SET_CMD_OFFSET], sizeof(float));
         memcpy(&new_u_max, &rx_buffer[SET_CMD_OFFSET + sizeof(float)], sizeof(float));
 
-        taskENTER_CRITICAL(&ctrl_ctx_a->mutex);
-        esp_err_t err_a = pid_control_set_output_limits(ctrl_ctx_a->pid, new_u_min, new_u_max);
-        taskEXIT_CRITICAL(&ctrl_ctx_a->mutex);
-
-        taskENTER_CRITICAL(&ctrl_ctx_b->mutex);
-        esp_err_t err_b = pid_control_set_output_limits(ctrl_ctx_b->pid, new_u_min, new_u_max);
-        taskEXIT_CRITICAL(&ctrl_ctx_b->mutex);
-
-        if(err_a != ESP_OK || err_b != ESP_OK) {
-            status = ESP_FAIL;
-        }
+        taskENTER_CRITICAL(&ctrl_ctx->mutex);
+        status = pid_control_set_output_limits(ctrl_ctx->pid, new_u_min, new_u_max);
+        taskEXIT_CRITICAL(&ctrl_ctx->mutex);
     }
 
     if(status == ESP_OK) {
         pid_control_config config = {0};
-        status = pid_control_get_config(ctrl_ctx_a->pid, &config);
+        status = pid_control_get_config(ctrl_ctx->pid, &config);
 
         if(status == ESP_OK) {
             config.u_min = new_u_min;
@@ -283,7 +256,7 @@ size_t udp_handle_command(const uint8_t* rx_buffer, size_t len, uint8_t* tx_buff
             break;
         
         case CMD_GET_SETPOINT:
-            handle_get_setpoint(tx_buffer, &tx_len, udp_ctx->control_ctx_motor_a->setpoint);
+            handle_get_setpoint(tx_buffer, &tx_len, udp_ctx->ctrl_task_ctx->setpoint);
             break;
         
         case CMD_GET_PID_GAINS: {
@@ -291,7 +264,7 @@ size_t udp_handle_command(const uint8_t* rx_buffer, size_t len, uint8_t* tx_buff
             float ki = 0.0f;
             float kd = 0.0f;
 
-            if(pid_control_get_gains(udp_ctx->control_ctx_motor_a->pid, &kp, &ki, &kd) == ESP_OK) {
+            if(pid_control_get_gains(udp_ctx->ctrl_task_ctx->pid, &kp, &ki, &kd) == ESP_OK) {
                 handle_get_pid_gains(tx_buffer, &tx_len, kp, ki, kd);
             }
             break;
@@ -300,7 +273,7 @@ size_t udp_handle_command(const uint8_t* rx_buffer, size_t len, uint8_t* tx_buff
         case CMD_GET_PID_ANTI_WINDUP: {
             float kaw = 0.0f;
 
-            if(pid_control_get_anti_windup(udp_ctx->control_ctx_motor_a->pid, &kaw) == ESP_OK) {
+            if(pid_control_get_anti_windup(udp_ctx->ctrl_task_ctx->pid, &kaw) == ESP_OK) {
                 handle_get_pid_anti_windup(tx_buffer, &tx_len, kaw);
             }
             break;
@@ -310,7 +283,7 @@ size_t udp_handle_command(const uint8_t* rx_buffer, size_t len, uint8_t* tx_buff
             float u_min = 0.0f;
             float u_max = 0.0f;
 
-            if(pid_control_get_output_limits(udp_ctx->control_ctx_motor_a->pid, &u_min, &u_max) == ESP_OK) {
+            if(pid_control_get_output_limits(udp_ctx->ctrl_task_ctx->pid, &u_min, &u_max) == ESP_OK) {
                 handle_get_pid_output_limits(tx_buffer, &tx_len, u_min, u_max);
             }
             break;
@@ -320,26 +293,26 @@ size_t udp_handle_command(const uint8_t* rx_buffer, size_t len, uint8_t* tx_buff
             float prev_output = 0.0f;
             float prev_read = 0.0f;
 
-            if(low_pass_filter_get_state(udp_ctx->control_ctx_motor_a->filter, &prev_output, &prev_read) == ESP_OK) {
+            if(low_pass_filter_get_state(udp_ctx->ctrl_task_ctx->filter, &prev_output, &prev_read) == ESP_OK) {
                 handle_get_lpf_state(tx_buffer, &tx_len, prev_output, prev_read);
             }
             break;
         }
 
         case CMD_SET_SETPOINT:
-            handle_set_setpoint(rx_buffer, len, tx_buffer, &tx_len, udp_ctx->control_ctx_motor_a, udp_ctx->control_ctx_motor_b);
+            handle_set_setpoint(rx_buffer, len, tx_buffer, &tx_len, udp_ctx->ctrl_task_ctx);
             break;
         
         case CMD_SET_PID_GAINS:
-            handle_set_pid_gains(rx_buffer, len, tx_buffer, &tx_len, udp_ctx->control_ctx_motor_a, udp_ctx->control_ctx_motor_b);
+            handle_set_pid_gains(rx_buffer, len, tx_buffer, &tx_len, udp_ctx->ctrl_task_ctx);
             break;
 
         case CMD_SET_PID_ANTI_WINDUP:
-            handle_set_pid_aw(rx_buffer, len, tx_buffer, &tx_len, udp_ctx->control_ctx_motor_a, udp_ctx->control_ctx_motor_b);
+            handle_set_pid_aw(rx_buffer, len, tx_buffer, &tx_len, udp_ctx->ctrl_task_ctx);
             break;
             
         case CMD_SET_PID_OUTPUT_LIMITS:
-            handle_set_pid_output_limits(rx_buffer, len, tx_buffer, &tx_len, udp_ctx->control_ctx_motor_a, udp_ctx->control_ctx_motor_b);
+            handle_set_pid_output_limits(rx_buffer, len, tx_buffer, &tx_len, udp_ctx->ctrl_task_ctx);
             break;
 
         default:

@@ -8,8 +8,7 @@
 #include "low_pass_filter.h"
 #include <stdint.h>
 
-extern TaskHandle_t control_motor_a_task_handle;
-extern TaskHandle_t control_motor_b_task_handle;
+extern TaskHandle_t ctrl_task_handle;
 
 void control_task(void* pvParameters) {
     control_task_ctx* ctx = pvParameters;
@@ -48,8 +47,7 @@ void control_task(void* pvParameters) {
 bool IRAM_ATTR control_task_notify_isr(gptimer_handle_t timer, const gptimer_alarm_event_data_t* edata, void* user_ctx) {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-    vTaskNotifyGiveFromISR(control_motor_a_task_handle, &xHigherPriorityTaskWoken);
-    vTaskNotifyGiveFromISR(control_motor_b_task_handle, &xHigherPriorityTaskWoken);
+    vTaskNotifyGiveFromISR(ctrl_task_handle, &xHigherPriorityTaskWoken);
     if(xHigherPriorityTaskWoken) {
         portYIELD_FROM_ISR();
         return true;

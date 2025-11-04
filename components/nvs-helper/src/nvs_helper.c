@@ -20,8 +20,7 @@ static const char TAG[] = "nvs-helper";
 #define DEFAULT_PID_UMAX 100.0f
 #define DEFAULT_PID_UMIN (-100.0f)
 
-#define DEFAULT_MOTOR_A_GPIO ((motor_gpio_config){ .pwma_gpio = GPIO_NUM_40, .pwmb_gpio = GPIO_NUM_41 })
-#define DEFAULT_MOTOR_B_GPIO ((motor_gpio_config){ .pwma_gpio = GPIO_NUM_17, .pwmb_gpio = GPIO_NUM_18 })
+#define DEFAULT_MOTOR_GPIO ((motor_gpio_config){ .pwma_gpio = GPIO_NUM_40, .pwmb_gpio = GPIO_NUM_41 })
 
 #define DEFAULT_SETPOINT 50.0f
 
@@ -34,16 +33,8 @@ static void default_pid_config(pid_control_config* config) {
     config->u_min = DEFAULT_PID_UMIN;
 }
 
-static void default_motor_gpio(const char* key, motor_gpio_config* config) {
-    if(key == NULL || config == NULL) {
-        return;
-    }
-
-    if(strcmp(key, NVS_MOTOR_A_GPIO_KEY) == 0) {
-        *config = DEFAULT_MOTOR_A_GPIO;
-    } else {
-        *config = DEFAULT_MOTOR_B_GPIO;
-    }
+static void default_motor_gpio(motor_gpio_config* config) {
+    *config = DEFAULT_MOTOR_GPIO;
 }
 
 esp_err_t nvs_read_pid_config(const char* key, pid_control_config* config) {
@@ -109,7 +100,7 @@ esp_err_t nvs_read_motor_gpio(const char* key, motor_gpio_config* config) {
                 break;
             case ESP_ERR_NVS_NOT_FOUND:
                 ESP_LOGW(TAG, "Motor GPIO config not found in NVS for key: %s. Using default values.", key);
-                default_motor_gpio(key, config);
+                default_motor_gpio(config);
                 break;
             default:
                 ESP_LOGE(TAG, "Error reading motor GPIO config from NVS: %s", esp_err_to_name(status));

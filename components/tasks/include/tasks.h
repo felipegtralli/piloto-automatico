@@ -12,8 +12,7 @@
 #define CONTROL_TASK_STACK_SIZE 2048
 #define CONTROL_TASK_PRIORITY 5
 
-#define CONTROL_TASK_A_NAME "control_motor_a_task"
-#define CONTROL_TASK_B_NAME "control_motor_b_task"
+#define CONTROL_TASK_NAME "control_motor_task"
 
 #define UDP_TASK_STACK_SIZE 2048 * 2
 #define UDP_TASK_PRIORITY 1
@@ -31,8 +30,7 @@ typedef struct {
 
 typedef struct {
     bool first_exchange;
-    control_task_ctx* control_ctx_motor_a;
-    control_task_ctx* control_ctx_motor_b;
+    control_task_ctx* ctrl_task_ctx;
 } udp_comm_task_ctx;
 
 void control_task(void* pvParameters);

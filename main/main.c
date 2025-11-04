@@ -32,17 +32,12 @@
 #define PWM_FREQUENCY_HZ 25000U      // 25 kHz
 
 /* variables */
-TaskHandle_t control_motor_a_task_handle = NULL;
-TaskHandle_t control_motor_b_task_handle = NULL;
+TaskHandle_t ctrl_task_handle = NULL;
 
-static control_task_ctx control_task_ctx_motor_a;
-static control_task_ctx control_task_ctx_motor_b;
+static control_task_ctx ctrl_task_ctx;
 
-static StackType_t control_motor_a_task_stack[CONTROL_TASK_STACK_SIZE];
-static StaticTask_t control_motor_a_task_buffer;
-
-static StackType_t control_motor_b_task_stack[CONTROL_TASK_STACK_SIZE];
-static StaticTask_t control_motor_b_task_buffer;
+static StackType_t ctrl_task_stack[CONTROL_TASK_STACK_SIZE];
+static StaticTask_t ctrl_task_buffer;
 
 TaskHandle_t udp_task_handle = NULL;
 
@@ -55,10 +50,10 @@ static StaticTask_t udp_task_buffer;
 static void nvs_init(void);
 static void pid_init(pid_control_handle* handle, uint8_t* storage);
 static void lpf_init(low_pass_filter_handle* handle, uint8_t* storage);
-static void pwm_init_start(motor_handle* motor, uint8_t* storage, const char* nvs_gpio_key);
+static void pwm_init_start(motor_handle* motor, uint8_t* storage);
 static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter, motor_cmpr_reg* cmpr_reg, float setpoint, control_task_ctx* ctx);
 static void wifi_ap_init(wifi_config_t* wifi_config, wifi_ap_event_handler_ctx* event_handler_ctx);
-static void udp_ctx_init(udp_comm_task_ctx* ctx, control_task_ctx* ctrl_ctx_motor_a, control_task_ctx* ctrl_ctx_motor_b);
+static void udp_ctx_init(udp_comm_task_ctx* ctx, control_task_ctx* ctrl_ctx);
 static void gptimer_init(void);
 
 void app_main(void) {
@@ -66,50 +61,32 @@ void app_main(void) {
     nvs_init();
 
     // pid controller setup
-    _Alignas(PID_CONTROL_STORAGE_ALIGNMENT) static uint8_t pid_storage_motor_a[PID_CONTROL_STORAGE_SIZE];
-    _Alignas(PID_CONTROL_STORAGE_ALIGNMENT) static uint8_t pid_storage_motor_b[PID_CONTROL_STORAGE_SIZE];
+    _Alignas(PID_CONTROL_STORAGE_ALIGNMENT) static uint8_t pid_storage[PID_CONTROL_STORAGE_SIZE];
 
-    pid_control_handle pid_motor_a = NULL;
-    pid_init(&pid_motor_a, pid_storage_motor_a);
-
-    pid_control_handle pid_motor_b = NULL;
-    pid_init(&pid_motor_b, pid_storage_motor_b);
+    pid_control_handle pid = NULL;
+    pid_init(&pid, pid_storage);
 
     // low pass filter setup
-    _Alignas(LOW_PASS_FILTER_STORAGE_ALIGNMENT) static uint8_t filter_storage_motor_a[LOW_PASS_FILTER_STORAGE_SIZE];
-    _Alignas(LOW_PASS_FILTER_STORAGE_ALIGNMENT) static uint8_t filter_storage_motor_b[LOW_PASS_FILTER_STORAGE_SIZE];
+    _Alignas(LOW_PASS_FILTER_STORAGE_ALIGNMENT) static uint8_t filter_storage[LOW_PASS_FILTER_STORAGE_SIZE];
 
-    low_pass_filter_handle filter_motor_a = NULL;
-    lpf_init(&filter_motor_a, filter_storage_motor_a);
-
-    low_pass_filter_handle filter_motor_b = NULL;
-    lpf_init(&filter_motor_b, filter_storage_motor_b);
+    low_pass_filter_handle filter = NULL;
+    lpf_init(&filter, filter_storage);
 
     // pwm setup
-    _Alignas(MOTOR_STORAGE_ALIGNMENT) static uint8_t motor_storage_a[MOTOR_STORAGE_SIZE];
-    _Alignas(MOTOR_STORAGE_ALIGNMENT) static uint8_t motor_storage_b[MOTOR_STORAGE_SIZE];
+    _Alignas(MOTOR_STORAGE_ALIGNMENT) static uint8_t motor_storage[MOTOR_STORAGE_SIZE];
 
-    motor_handle motor_a = NULL;
-    pwm_init_start(&motor_a, motor_storage_a, NVS_MOTOR_A_GPIO_KEY);
+    motor_handle motor = NULL;
+    pwm_init_start(&motor, motor_storage);
 
-    motor_handle motor_b = NULL;
-    pwm_init_start(&motor_b, motor_storage_b, NVS_MOTOR_B_GPIO_KEY);
-
-    static motor_cmpr_reg motor_a_cmpr_reg = {0};
-    ESP_ERROR_CHECK(motor_get_cmpr_reg(motor_a, &motor_a_cmpr_reg));
-
-    static motor_cmpr_reg motor_b_cmpr_reg = {0};
-    ESP_ERROR_CHECK(motor_get_cmpr_reg(motor_b, &motor_b_cmpr_reg));
+    static motor_cmpr_reg motor_reg = {0};
+    ESP_ERROR_CHECK(motor_get_cmpr_reg(motor, &motor_reg));
 
     // control task setup
-    float setpoint = 0.0f;
+    static float setpoint = 0.0f;
     nvs_read_setpoint(NVS_SETPOINT_KEY, &setpoint);
 
-    ctrl_ctx_init(pid_motor_a, filter_motor_a, &motor_a_cmpr_reg, setpoint, &control_task_ctx_motor_a);
-    ctrl_ctx_init(pid_motor_b, filter_motor_b, &motor_b_cmpr_reg, setpoint, &control_task_ctx_motor_b);
-
-    control_motor_a_task_handle = xTaskCreateStatic(control_task, CONTROL_TASK_A_NAME, CONTROL_TASK_STACK_SIZE, &control_task_ctx_motor_a, CONTROL_TASK_PRIORITY, control_motor_a_task_stack, &control_motor_a_task_buffer);
-    control_motor_b_task_handle = xTaskCreateStatic(control_task, CONTROL_TASK_B_NAME, CONTROL_TASK_STACK_SIZE, &control_task_ctx_motor_b, CONTROL_TASK_PRIORITY, control_motor_b_task_stack, &control_motor_b_task_buffer);
+    ctrl_ctx_init(pid, filter, &motor_reg, setpoint, &ctrl_task_ctx);
+    ctrl_task_handle = xTaskCreateStatic(control_task, CONTROL_TASK_NAME, CONTROL_TASK_STACK_SIZE, &ctrl_task_ctx, CONTROL_TASK_PRIORITY, ctrl_task_stack, &ctrl_task_buffer);
 
     // wifi setup
     static wifi_ap_event_handler_ctx wifi_ap_ehandler_ctx = {
@@ -131,7 +108,7 @@ void app_main(void) {
     wifi_ap_init(&wifi_config, &wifi_ap_ehandler_ctx);
 
     // udp task setup
-    udp_ctx_init(&udp_task_ctx, &control_task_ctx_motor_a, &control_task_ctx_motor_b);
+    udp_ctx_init(&udp_task_ctx, &ctrl_task_ctx);
 
     udp_task_handle = xTaskCreateStatic(udp_comm_task, UDP_TASK_NAME, UDP_TASK_STACK_SIZE, &udp_task_ctx, UDP_TASK_PRIORITY, udp_task_stack, &udp_task_buffer);
     if(!wifi_ap_ehandler_ctx.station_connected) {
@@ -159,7 +136,7 @@ static void pid_init(pid_control_handle* handle, uint8_t* storage) {
 }
 
 static void lpf_init(low_pass_filter_handle* handle, uint8_t* storage) {
-    low_pass_filter_config filter_config = {
+    const low_pass_filter_config filter_config = {
         .cutoff_freq = FILTER_CUTOFF_FREQ_HZ,
         .sampling_freq = FILTER_SAMPLING_FREQ_HZ,
     };
@@ -167,11 +144,11 @@ static void lpf_init(low_pass_filter_handle* handle, uint8_t* storage) {
     ESP_ERROR_CHECK(low_pass_filter_init(storage, LOW_PASS_FILTER_STORAGE_SIZE, &filter_config, handle));
 }
 
-static void pwm_init_start(motor_handle* motor, uint8_t* storage, const char* nvs_gpio_key) {
+static void pwm_init_start(motor_handle* motor, uint8_t* storage) {
     motor_gpio_config gpio_config = {0};
-    nvs_read_motor_gpio(nvs_gpio_key, &gpio_config);
+    nvs_read_motor_gpio(NVS_MOTOR_GPIO_KEY, &gpio_config);
 
-    motor_config motor_cfg = {
+    const motor_config motor_cfg = {
         .gpio_config = gpio_config,
         .pwm_config = {
             .group_id = PWM_GROUP_ID,
@@ -208,10 +185,9 @@ static void wifi_ap_init(wifi_config_t* wifi_config, wifi_ap_event_handler_ctx* 
     ESP_ERROR_CHECK(esp_wifi_start());
 }
 
-static void udp_ctx_init(udp_comm_task_ctx* ctx, control_task_ctx* ctrl_ctx_motor_a, control_task_ctx* ctrl_ctx_motor_b) {
+static void udp_ctx_init(udp_comm_task_ctx* ctx, control_task_ctx* ctrl_ctx) {
     ctx->first_exchange = true;
-    ctx->control_ctx_motor_a = ctrl_ctx_motor_a;
-    ctx->control_ctx_motor_b = ctrl_ctx_motor_b;
+    ctx->ctrl_task_ctx = ctrl_ctx;
 }
 
 static void gptimer_init(void) {
