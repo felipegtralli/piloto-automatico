@@ -4,10 +4,12 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "freertos/FreeRTOS.h"
+#include "driver/pulse_cnt.h"
 #include "driver/gptimer_types.h"
 #include "motor.h"
 #include "pid_control.h"
 #include "low_pass_filter.h"
+#include "wifi.h"
 
 #define CONTROL_TASK_STACK_SIZE 2048U
 #define CONTROL_TASK_PRIORITY 5U
@@ -23,12 +25,14 @@ typedef struct {
     pid_control_handle pid;
     low_pass_filter_handle filter;
     motor_cmpr_reg* motor_cmpr_reg;
+    pcnt_unit_handle_t pcnt_unit;
     float setpoint;
     uint16_t pwm_max_ticks;
     portMUX_TYPE mutex;
 } control_task_ctx;
 
 typedef struct {
+    wifi_ap_event_handler_ctx* ehandler_ctx;
     bool first_exchange;
     control_task_ctx* ctrl_task_ctx;
 } udp_comm_task_ctx;

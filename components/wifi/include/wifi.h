@@ -18,6 +18,7 @@ typedef struct {
 
 void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 int udp_create_socket(void);
+void udp_reset_dest_addr(void);
 
 ssize_t wifi_udp_receive(const int sock, uint8_t* rx_buffer, size_t rx_buffer_len, struct sockaddr_in* src_addr, bool* first_exchange);
 ssize_t wifi_udp_send(const int sock, uint8_t* tx_buffer, size_t tx_buffer_len);

@@ -12,6 +12,11 @@ void udp_comm_task(void* pvParameters) {
     uint8_t rx_buffer[UDP_MAX_RX_BUF_SIZE] = {0};
     struct sockaddr_in src_addr = {0};
     for(;;) {
+        if(!ctx->ehandler_ctx->station_connected) {
+            udp_reset_dest_addr();
+            ctx->first_exchange = true;
+            vTaskSuspend(NULL);
+        }
         ssize_t len = wifi_udp_receive(sock, rx_buffer, sizeof(rx_buffer) - 1, &src_addr, &ctx->first_exchange);
 
         if(len > 0) {

@@ -4,12 +4,12 @@
 #include "lwip/sockets.h"
 #include "wifi.h"
 
-#define UDP_CLIENT_PORT 12345U
+#define UDP_SERVER_PORT 12345U
 
 static struct sockaddr_in dest_addr = {
     .sin_addr.s_addr = 0,
     .sin_family = AF_INET,
-    .sin_port = htons(UDP_CLIENT_PORT),
+    .sin_port = 0,
 };
 
 int udp_create_socket(void) {
@@ -18,7 +18,7 @@ int udp_create_socket(void) {
     if(sock > 0) {
         struct sockaddr_in local_addr = {
             .sin_family = AF_INET,
-            .sin_port = htons(UDP_CLIENT_PORT),
+            .sin_port = htons(UDP_SERVER_PORT),
             .sin_addr.s_addr = htonl(INADDR_ANY)
         };
 
@@ -26,9 +26,20 @@ int udp_create_socket(void) {
         if(ret < 0) {
             closesocket(sock);
             sock = -1;
+        } else {
+            struct timeval timeout = {
+                .tv_sec = 1,
+                .tv_usec = 0,
+            };
+            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
         }
     }
     return sock;  
+}
+
+void udp_reset_dest_addr() {
+    dest_addr.sin_addr.s_addr = 0;
+    dest_addr.sin_port = 0;
 }
 
 ssize_t wifi_udp_receive(const int sock, uint8_t* rx_buffer, size_t rx_buffer_len, struct sockaddr_in* src_addr, bool* first_exchange) {
@@ -38,6 +49,7 @@ ssize_t wifi_udp_receive(const int sock, uint8_t* rx_buffer, size_t rx_buffer_le
     if(len > 0) {
         if(*first_exchange) {
             dest_addr.sin_addr.s_addr = src_addr->sin_addr.s_addr;
+            dest_addr.sin_port = src_addr->sin_port;
             *first_exchange = false;
         }
 

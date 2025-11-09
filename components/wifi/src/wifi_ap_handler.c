@@ -26,7 +26,5 @@ void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id
 
         ctx->station_connected = false;
         ESP_LOGI(TAG, "Station disconnected: MAC: "MACSTR", AID: %d, REASON: %d", MAC2STR(event->mac), event->aid, event->reason);
-
-        vTaskSuspend(udp_task_handle);
     }
 }

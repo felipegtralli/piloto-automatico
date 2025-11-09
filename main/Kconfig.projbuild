@@ -1,0 +1,55 @@
+menu "Main Project Configuration"
+
+    config TIMER_RESOLUTION_HZ
+        int "Timer Resolution (Hz)"
+        default 1000000
+        help
+          Default 1000000 Hz (1 MHz).
+
+    config SAMPLING_RATE_HZ
+        int "Sampling Rate (Hz)"
+        default 100
+        help
+          Default 100 Hz.
+
+    config FILTER_CUTOFF_FREQ_HZ
+        string "Filter Cutoff Frequency (Hz)"
+        default "10.0"
+        help
+          Default 10 Hz.
+
+    config PWM_GROUP_ID
+        int "PWM Group ID"
+        default 0
+        help
+          Default PWM group ID is 0.
+    
+    config PWM_TIMER_RESOLUTION_HZ
+        int "PWM Timer Resolution (Hz)"
+        default 10000000
+        help
+          Default PWM timer resolution is 10 MHz.
+
+    config PWM_FREQUENCY_HZ
+        int "PWM Frequency (Hz)"
+        default 25000
+        help
+          Default PWM frequency is 25 kHz.
+
+    config MOTOR_GPIO_A
+        int "Motor GPIO A"
+        default 40
+
+    config MOTOR_GPIO_B
+        int "Motor GPIO B"
+        default 15
+
+    config ENCODER_GPIO_A
+        int "Encoder GPIO A"
+        default 35
+
+    config ENCODER_GPIO_B
+        int "Encoder GPIO B"
+        default 36
+
+endmenu

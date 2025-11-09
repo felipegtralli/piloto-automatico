@@ -1,8 +1,10 @@
 /* includes */
 #include <stdint.h>
 #include <string.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "driver/pulse_cnt.h"
 #include "driver/gptimer.h"
 #include "driver/gptimer_types.h"
 #include "esp_event.h"
@@ -20,16 +22,24 @@
 #include "wifi.h"
 
 /* defines */
-#define TIMER_RESOLUTION_HZ 1000000U // 1 MHz
-#define SAMPLING_RATE_HZ 100U
+#define TIMER_RESOLUTION_HZ CONFIG_TIMER_RESOLUTION_HZ
+#define SAMPLING_RATE_HZ CONFIG_SAMPLING_RATE_HZ
 #define TIMER_ALARM_COUNT (TIMER_RESOLUTION_HZ / SAMPLING_RATE_HZ)
 
-#define FILTER_CUTOFF_FREQ_HZ 10.0f
+#define FILTER_CUTOFF_FREQ_HZ (strtof(CONFIG_FILTER_CUTOFF_FREQ_HZ, NULL))
 #define FILTER_SAMPLING_FREQ_HZ (float)SAMPLING_RATE_HZ
 
-#define PWM_GROUP_ID 0
-#define PWM_RESOLUTION_HZ 10000000U // 10 MHz
-#define PWM_FREQUENCY_HZ 25000U // 25 kHz
+#define PWM_GROUP_ID CONFIG_PWM_GROUP_ID
+#define PWM_RESOLUTION_HZ CONFIG_PWM_TIMER_RESOLUTION_HZ
+#define PWM_FREQUENCY_HZ CONFIG_PWM_FREQUENCY_HZ
+
+#define MOTOR_GPIO ((motor_gpio_config){ .pwma_gpio = CONFIG_MOTOR_GPIO_A, .pwmb_gpio = CONFIG_MOTOR_GPIO_B })
+
+#define ENCODER_GPIO_A CONFIG_ENCODER_GPIO_A
+#define ENCODER_GPIO_B CONFIG_ENCODER_GPIO_B
+
+#define ENCODER_HIGH_LIMIT 1000
+#define ENCODER_LOW_LIMIT -1000
 
 /* variables */
 TaskHandle_t ctrl_task_handle = NULL;
@@ -40,9 +50,10 @@ static void nvs_init(void);
 static void pid_init(pid_control_handle* handle, uint8_t* storage);
 static void lpf_init(low_pass_filter_handle* handle, uint8_t* storage);
 static void pwm_init_start(motor_handle* motor, uint8_t* storage);
-static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter, motor_cmpr_reg* cmpr_reg, float setpoint, control_task_ctx* ctx);
+static void pcnt_init(pcnt_unit_handle_t pcnt_unit);
+static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter, motor_cmpr_reg* cmpr_reg, pcnt_unit_handle_t pcnt_unit, float setpoint, control_task_ctx* ctx);
 static void wifi_ap_init(wifi_ap_event_handler_ctx* event_handler_ctx);
-static void udp_ctx_init(udp_comm_task_ctx* ctx, control_task_ctx* ctrl_ctx);
+static void udp_ctx_init(udp_comm_task_ctx* ctx, wifi_ap_event_handler_ctx* ehandler_ctx, control_task_ctx* ctrl_ctx);
 static void gptimer_init(void);
 
 void app_main(void) {
@@ -70,12 +81,16 @@ void app_main(void) {
     static motor_cmpr_reg motor_reg = {0};
     ESP_ERROR_CHECK(motor_get_cmpr_reg(motor, &motor_reg));
 
+    // pcnt setup
+    pcnt_unit_handle_t pcnt_unit = NULL;
+    pcnt_init(pcnt_unit);
+
     // control task setup
     static float setpoint = 0.0f;
     nvs_read_setpoint(NVS_SETPOINT_KEY, &setpoint);
 
     static control_task_ctx ctrl_task_ctx = {0};
-    ctrl_ctx_init(pid, filter, &motor_reg, setpoint, &ctrl_task_ctx);
+    ctrl_ctx_init(pid, filter, &motor_reg, pcnt_unit, setpoint, &ctrl_task_ctx);
 
     static StackType_t ctrl_task_stack[CONTROL_TASK_STACK_SIZE];
     static StaticTask_t ctrl_task_buffer;
@@ -89,7 +104,7 @@ void app_main(void) {
 
     // udp task setup
     static udp_comm_task_ctx udp_task_ctx = {0};
-    udp_ctx_init(&udp_task_ctx, &ctrl_task_ctx);
+    udp_ctx_init(&udp_task_ctx, &wifi_ap_ehandler_ctx, &ctrl_task_ctx);
 
     static StackType_t udp_task_stack[UDP_TASK_STACK_SIZE];
     static StaticTask_t udp_task_buffer;
@@ -113,7 +128,11 @@ static void nvs_init(void) {
 
 static void pid_init(pid_control_handle* handle, uint8_t* storage) {
     pid_control_config pid_config = {0};
-    ESP_ERROR_CHECK(nvs_read_pid_config(NVS_PID_CONFIG_KEY, &pid_config));
+    esp_err_t err = nvs_read_pid_config(NVS_PID_CONFIG_KEY, &pid_config);
+    if(err == ESP_ERR_NVS_NOT_FOUND) {
+        err = ESP_OK;
+    }
+    ESP_ERROR_CHECK(err);
 
     ESP_ERROR_CHECK(pid_control_init(storage, PID_CONTROL_STORAGE_SIZE, handle, &pid_config));
 }
@@ -128,11 +147,8 @@ static void lpf_init(low_pass_filter_handle* handle, uint8_t* storage) {
 }
 
 static void pwm_init_start(motor_handle* motor, uint8_t* storage) {
-    motor_gpio_config gpio_config = {0};
-    ESP_ERROR_CHECK(nvs_read_motor_gpio(NVS_MOTOR_GPIO_KEY, &gpio_config));
-
     const motor_config motor_cfg = {
-        .gpio_config = gpio_config,
+        .gpio_config = MOTOR_GPIO,
         .pwm_config = {
             .group_id = PWM_GROUP_ID,
             .resolution_hz = PWM_RESOLUTION_HZ,
@@ -144,13 +160,45 @@ static void pwm_init_start(motor_handle* motor, uint8_t* storage) {
     ESP_ERROR_CHECK(motor_pwm_enable_start(*motor));
 }
 
-static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter, motor_cmpr_reg* cmpr_reg, float setpoint, control_task_ctx* ctx) {
+static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter, motor_cmpr_reg* cmpr_reg, pcnt_unit_handle_t pcnt_unit, float setpoint, control_task_ctx* ctx) {
     ctx->pid = pid;
     ctx->filter = filter;
     ctx->motor_cmpr_reg = cmpr_reg;
+    ctx->pcnt_unit = pcnt_unit;
     ctx->setpoint = setpoint;
     ctx->pwm_max_ticks = (PWM_RESOLUTION_HZ / PWM_FREQUENCY_HZ) - 1U;
     (void)memcpy(&ctx->mutex, &(portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED, sizeof(portMUX_TYPE));
+}
+
+static void pcnt_init(pcnt_unit_handle_t pcnt_unit) {
+    const pcnt_unit_config_t pcnt_config = {
+        .high_limit = ENCODER_HIGH_LIMIT,
+        .low_limit = ENCODER_LOW_LIMIT,
+        .flags.accum_count = true,
+    };
+    ESP_ERROR_CHECK(pcnt_new_unit(&pcnt_config, &pcnt_unit));
+
+    pcnt_chan_config_t chan_a_config = {
+        .edge_gpio_num = ENCODER_GPIO_A,
+        .level_gpio_num = ENCODER_GPIO_B,
+    };
+    pcnt_channel_handle_t chan_a = NULL;
+    ESP_ERROR_CHECK(pcnt_new_channel(pcnt_unit, &chan_a_config, &chan_a));
+
+    pcnt_chan_config_t chan_b_config = {
+        .edge_gpio_num = ENCODER_GPIO_B,
+        .level_gpio_num = ENCODER_GPIO_A,
+    };
+    pcnt_channel_handle_t chan_b = NULL;
+    ESP_ERROR_CHECK(pcnt_new_channel(pcnt_unit, &chan_b_config, &chan_b));
+
+    ESP_ERROR_CHECK(pcnt_channel_set_edge_action(chan_a, PCNT_CHANNEL_EDGE_ACTION_DECREASE, PCNT_CHANNEL_EDGE_ACTION_INCREASE));
+    ESP_ERROR_CHECK(pcnt_channel_set_level_action(chan_a, PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE));
+    ESP_ERROR_CHECK(pcnt_channel_set_edge_action(chan_b, PCNT_CHANNEL_EDGE_ACTION_INCREASE, PCNT_CHANNEL_EDGE_ACTION_DECREASE));
+    ESP_ERROR_CHECK(pcnt_channel_set_level_action(chan_b, PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE));
+
+    ESP_ERROR_CHECK(pcnt_unit_enable(pcnt_unit));
+    ESP_ERROR_CHECK(pcnt_unit_clear_count(pcnt_unit));
 }
 
 static void wifi_ap_init(wifi_ap_event_handler_ctx* event_handler_ctx) {
@@ -181,7 +229,8 @@ static void wifi_ap_init(wifi_ap_event_handler_ctx* event_handler_ctx) {
     ESP_ERROR_CHECK(esp_wifi_start());
 }
 
-static void udp_ctx_init(udp_comm_task_ctx* ctx, control_task_ctx* ctrl_ctx) {
+static void udp_ctx_init(udp_comm_task_ctx* ctx, wifi_ap_event_handler_ctx* ehandler_ctx, control_task_ctx* ctrl_ctx) {
+    ctx->ehandler_ctx = ehandler_ctx;
     ctx->first_exchange = true;
     ctx->ctrl_task_ctx = ctrl_ctx;
 }
