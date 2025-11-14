@@ -1,8 +1,10 @@
 /* includes */
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/task.h"
 #include "driver/pulse_cnt.h"
 #include "driver/gptimer.h"
@@ -20,6 +22,13 @@
 #include "nvs_helper.h"
 #include "motor.h"
 #include "wifi.h"
+#include "button.h"
+
+/* types */
+struct button_start_stop_ctx {
+    bool timer_started;
+    gptimer_handle_t timer;
+};
 
 /* defines */
 #define TIMER_RESOLUTION_HZ CONFIG_TIMER_RESOLUTION_HZ
@@ -39,11 +48,21 @@
 #define ENCODER_GPIO_B CONFIG_ENCODER_GPIO_B
 
 #define ENCODER_HIGH_LIMIT 1000
-#define ENCODER_LOW_LIMIT -1000
+#define ENCODER_LOW_LIMIT (-1000)
+
+#define BUTTON_DEBOUNCE_MS CONFIG_BUTTON_DEBOUNCE_MS
+
+#define BUTTON_START_STOP_GPIO CONFIG_BUTTON_START_STOP_GPIO
+
+#define BUTTON_QUEUE_LENGHT 10
+#define BUTTON_QUEUE_ITEM_SIZE sizeof(button_event)
 
 /* variables */
 TaskHandle_t ctrl_task_handle = NULL;
 TaskHandle_t udp_task_handle = NULL;
+TaskHandle_t button_task_handle = NULL;
+
+QueueHandle_t button_queue = NULL;
 
 /* function prototypes */
 static void nvs_init(void);
@@ -54,7 +73,9 @@ static void pcnt_init(pcnt_unit_handle_t pcnt_unit);
 static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter, motor_cmpr_reg* cmpr_reg, pcnt_unit_handle_t pcnt_unit, float setpoint, control_task_ctx* ctx);
 static void wifi_ap_init(wifi_ap_event_handler_ctx* event_handler_ctx);
 static void udp_ctx_init(udp_comm_task_ctx* ctx, wifi_ap_event_handler_ctx* ehandler_ctx, control_task_ctx* ctrl_ctx);
-static void gptimer_init(void);
+static void gptimer_init(gptimer_handle_t* timer);
+static void button_start_stop_callback(button_handle handle, void* ctx);
+static void btn_init(button_handle* handle, void* callback_ctx, uint8_t* storage);
 
 void app_main(void) {
     // nvs setup
@@ -114,7 +135,31 @@ void app_main(void) {
     }
 
     // gptimer setup
-    gptimer_init();
+    gptimer_handle_t timer = NULL;
+    gptimer_init(&timer);
+
+    // button setup
+    static uint8_t button_queue_storage[BUTTON_QUEUE_LENGHT * BUTTON_QUEUE_ITEM_SIZE];
+    static StaticQueue_t button_queue_struct;
+
+    button_queue = xQueueCreateStatic(BUTTON_QUEUE_LENGHT, BUTTON_QUEUE_ITEM_SIZE, button_queue_storage, &button_queue_struct);
+
+    _Alignas(BUTTON_STORAGE_ALIGNMENT) static uint8_t button_start_stop_storage[BUTTON_STORAGE_SIZE] = {0};
+    
+    static struct button_start_stop_ctx btn_start_stop_ctx = {0};
+    btn_start_stop_ctx.timer = timer;
+    btn_start_stop_ctx.timer_started = false;
+
+    button_handle button_start_stop = NULL;
+    btn_init(&button_start_stop, (void*)&btn_start_stop_ctx, button_start_stop_storage);
+
+    // button task setup
+    static button_task_ctx btn_task_ctx = {0};
+    btn_task_ctx.button_queue = button_queue;
+
+    static StackType_t button_task_stack[BUTTON_TASK_STACK_SIZE];
+    static StaticTask_t button_task_buffer;
+    button_task_handle = xTaskCreateStatic(button_task, BUTTON_TASK_NAME, BUTTON_TASK_STACK_SIZE, &btn_task_ctx, BUTTON_TASK_PRIORITY, button_task_stack, &button_task_buffer);
 }
 
 static void nvs_init(void) {
@@ -235,27 +280,51 @@ static void udp_ctx_init(udp_comm_task_ctx* ctx, wifi_ap_event_handler_ctx* ehan
     ctx->ctrl_task_ctx = ctrl_ctx;
 }
 
-static void gptimer_init(void) {
-    gptimer_handle_t timer = NULL;
+static void gptimer_init(gptimer_handle_t* timer) {
     const gptimer_config_t timer_config = {
         .clk_src = GPTIMER_CLK_SRC_DEFAULT,
         .direction = GPTIMER_COUNT_UP,
         .resolution_hz = TIMER_RESOLUTION_HZ,
     };
-    ESP_ERROR_CHECK(gptimer_new_timer(&timer_config, &timer));
+    ESP_ERROR_CHECK(gptimer_new_timer(&timer_config, timer));
 
     const gptimer_alarm_config_t alarm_config = {
         .alarm_count = TIMER_ALARM_COUNT,
         .reload_count = 0,
         .flags.auto_reload_on_alarm = true,
     };
-    ESP_ERROR_CHECK(gptimer_set_alarm_action(timer, &alarm_config));
+    ESP_ERROR_CHECK(gptimer_set_alarm_action(*timer, &alarm_config));
 
     const gptimer_event_callbacks_t timer_callback = {
         .on_alarm = control_task_notify_isr,
     };
-    ESP_ERROR_CHECK(gptimer_register_event_callbacks(timer, &timer_callback, NULL));
+    ESP_ERROR_CHECK(gptimer_register_event_callbacks(*timer, &timer_callback, NULL));
 
-    ESP_ERROR_CHECK(gptimer_enable(timer));
-    ESP_ERROR_CHECK(gptimer_start(timer));
+    ESP_ERROR_CHECK(gptimer_enable(*timer));
+}
+
+static void button_start_stop_callback(button_handle handle, void* ctx) {
+    if(handle == NULL || ctx == NULL) {
+        return;
+    }
+
+    struct button_start_stop_ctx* btn_ctx = ctx;
+    if(btn_ctx->timer_started) {
+        ESP_ERROR_CHECK(gptimer_stop(btn_ctx->timer));
+        btn_ctx->timer_started = false;
+    } else {
+        ESP_ERROR_CHECK(gptimer_start(btn_ctx->timer));
+        btn_ctx->timer_started = true;
+    }
+}
+
+static void btn_init(button_handle* handle, void* callback_ctx, uint8_t* storage) {
+    const button_config btn_config = {
+        .gpio_num = BUTTON_START_STOP_GPIO,
+        .debounce_ms = BUTTON_DEBOUNCE_MS,
+        .queue = button_queue,
+        .callback = button_start_stop_callback,
+        .callback_ctx = callback_ctx,
+    };
+    ESP_ERROR_CHECK(button_init(storage, BUTTON_STORAGE_SIZE, &btn_config, handle));
 }

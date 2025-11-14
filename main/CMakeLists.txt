@@ -1,6 +1,6 @@
 idf_component_register(SRCS "main.c"
                     INCLUDE_DIRS "."
-                    REQUIRES esp-pid-control low-pass-filter tasks driver nvs-helper motor nvs_flash wifi esp_wifi)
+                    REQUIRES esp-pid-control low-pass-filter tasks driver nvs-helper motor button nvs_flash wifi esp_wifi)
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wall

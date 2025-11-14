@@ -52,4 +52,12 @@ menu "Main Project Configuration"
         int "Encoder GPIO B"
         default 36
 
+    config BUTTON_DEBOUNCE_MS
+        int "Button Debounce Time (ms)"
+        default 20
+
+    config BUTTON_START_STOP_GPIO
+        int "Button Start/Stop GPIO"
+        default 10
+
 endmenu

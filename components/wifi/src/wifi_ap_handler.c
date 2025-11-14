@@ -1,5 +1,4 @@
 #include <stdint.h>
-#include <string.h>
 #include "esp_log.h"
 #include "esp_wifi_types_generic.h"
 #include "esp_mac.h"
