@@ -26,21 +26,23 @@
 
 /* types */
 struct button_start_stop_ctx {
-    bool timer_started;
     gptimer_handle_t timer;
+    motor_cmpr_reg* motor_reg;
+    portMUX_TYPE* ctrl_mutex;
+    bool timer_started;
 };
 
 /* defines */
-#define TIMER_RESOLUTION_HZ CONFIG_TIMER_RESOLUTION_HZ
-#define SAMPLING_RATE_HZ CONFIG_SAMPLING_RATE_HZ
-#define TIMER_ALARM_COUNT (TIMER_RESOLUTION_HZ / SAMPLING_RATE_HZ)
+#define TIMER_RESOLUTION_HZ (uint32_t)CONFIG_TIMER_RESOLUTION_HZ
+#define SAMPLING_RATE_HZ (uint32_t)CONFIG_SAMPLING_RATE_HZ
+#define TIMER_ALARM_COUNT (uint64_t)(TIMER_RESOLUTION_HZ / SAMPLING_RATE_HZ)
 
 #define FILTER_CUTOFF_FREQ_HZ (strtof(CONFIG_FILTER_CUTOFF_FREQ_HZ, NULL))
 #define FILTER_SAMPLING_FREQ_HZ (float)SAMPLING_RATE_HZ
 
 #define PWM_GROUP_ID CONFIG_PWM_GROUP_ID
-#define PWM_RESOLUTION_HZ CONFIG_PWM_TIMER_RESOLUTION_HZ
-#define PWM_FREQUENCY_HZ CONFIG_PWM_FREQUENCY_HZ
+#define PWM_RESOLUTION_HZ (uint32_t)CONFIG_PWM_TIMER_RESOLUTION_HZ
+#define PWM_FREQUENCY_HZ (uint32_t)CONFIG_PWM_FREQUENCY_HZ
 
 #define MOTOR_GPIO ((motor_gpio_config){ .pwma_gpio = CONFIG_MOTOR_GPIO_A, .pwmb_gpio = CONFIG_MOTOR_GPIO_B })
 
@@ -50,7 +52,7 @@ struct button_start_stop_ctx {
 #define ENCODER_HIGH_LIMIT 1000
 #define ENCODER_LOW_LIMIT (-1000)
 
-#define BUTTON_DEBOUNCE_MS CONFIG_BUTTON_DEBOUNCE_MS
+#define BUTTON_DEBOUNCE_MS (uint32_t)CONFIG_BUTTON_DEBOUNCE_MS
 
 #define BUTTON_START_STOP_GPIO CONFIG_BUTTON_START_STOP_GPIO
 
@@ -69,7 +71,7 @@ static void nvs_init(void);
 static void pid_init(pid_control_handle* handle, uint8_t* storage);
 static void lpf_init(low_pass_filter_handle* handle, uint8_t* storage);
 static void pwm_init_start(motor_handle* motor, uint8_t* storage);
-static void pcnt_init(pcnt_unit_handle_t pcnt_unit);
+static void pcnt_init(pcnt_unit_handle_t* pcnt_unit);
 static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter, motor_cmpr_reg* cmpr_reg, pcnt_unit_handle_t pcnt_unit, float setpoint, control_task_ctx* ctx);
 static void wifi_ap_init(wifi_ap_event_handler_ctx* event_handler_ctx);
 static void udp_ctx_init(udp_comm_task_ctx* ctx, wifi_ap_event_handler_ctx* ehandler_ctx, control_task_ctx* ctrl_ctx);
@@ -104,7 +106,7 @@ void app_main(void) {
 
     // pcnt setup
     pcnt_unit_handle_t pcnt_unit = NULL;
-    pcnt_init(pcnt_unit);
+    pcnt_init(&pcnt_unit);
 
     // control task setup
     static float setpoint = 0.0f;
@@ -137,7 +139,7 @@ void app_main(void) {
     // gptimer setup
     gptimer_handle_t timer = NULL;
     gptimer_init(&timer);
-
+    
     // button setup
     static uint8_t button_queue_storage[BUTTON_QUEUE_LENGHT * BUTTON_QUEUE_ITEM_SIZE];
     static StaticQueue_t button_queue_struct;
@@ -148,6 +150,8 @@ void app_main(void) {
     
     static struct button_start_stop_ctx btn_start_stop_ctx = {0};
     btn_start_stop_ctx.timer = timer;
+    btn_start_stop_ctx.motor_reg = &motor_reg;
+    btn_start_stop_ctx.ctrl_mutex = &ctrl_task_ctx.mutex;
     btn_start_stop_ctx.timer_started = false;
 
     button_handle button_start_stop = NULL;
@@ -215,35 +219,35 @@ static void ctrl_ctx_init(pid_control_handle pid, low_pass_filter_handle filter,
     (void)memcpy(&ctx->mutex, &(portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED, sizeof(portMUX_TYPE));
 }
 
-static void pcnt_init(pcnt_unit_handle_t pcnt_unit) {
+static void pcnt_init(pcnt_unit_handle_t* pcnt_unit) {
     const pcnt_unit_config_t pcnt_config = {
         .high_limit = ENCODER_HIGH_LIMIT,
         .low_limit = ENCODER_LOW_LIMIT,
         .flags.accum_count = true,
     };
-    ESP_ERROR_CHECK(pcnt_new_unit(&pcnt_config, &pcnt_unit));
+    ESP_ERROR_CHECK(pcnt_new_unit(&pcnt_config, pcnt_unit));
 
     pcnt_chan_config_t chan_a_config = {
         .edge_gpio_num = ENCODER_GPIO_A,
         .level_gpio_num = ENCODER_GPIO_B,
     };
     pcnt_channel_handle_t chan_a = NULL;
-    ESP_ERROR_CHECK(pcnt_new_channel(pcnt_unit, &chan_a_config, &chan_a));
+    ESP_ERROR_CHECK(pcnt_new_channel(*pcnt_unit, &chan_a_config, &chan_a));
 
     pcnt_chan_config_t chan_b_config = {
         .edge_gpio_num = ENCODER_GPIO_B,
         .level_gpio_num = ENCODER_GPIO_A,
     };
     pcnt_channel_handle_t chan_b = NULL;
-    ESP_ERROR_CHECK(pcnt_new_channel(pcnt_unit, &chan_b_config, &chan_b));
+    ESP_ERROR_CHECK(pcnt_new_channel(*pcnt_unit, &chan_b_config, &chan_b));
 
     ESP_ERROR_CHECK(pcnt_channel_set_edge_action(chan_a, PCNT_CHANNEL_EDGE_ACTION_DECREASE, PCNT_CHANNEL_EDGE_ACTION_INCREASE));
     ESP_ERROR_CHECK(pcnt_channel_set_level_action(chan_a, PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE));
     ESP_ERROR_CHECK(pcnt_channel_set_edge_action(chan_b, PCNT_CHANNEL_EDGE_ACTION_INCREASE, PCNT_CHANNEL_EDGE_ACTION_DECREASE));
     ESP_ERROR_CHECK(pcnt_channel_set_level_action(chan_b, PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE));
 
-    ESP_ERROR_CHECK(pcnt_unit_enable(pcnt_unit));
-    ESP_ERROR_CHECK(pcnt_unit_clear_count(pcnt_unit));
+    ESP_ERROR_CHECK(pcnt_unit_enable(*pcnt_unit));
+    ESP_ERROR_CHECK(pcnt_unit_clear_count(*pcnt_unit));
 }
 
 static void wifi_ap_init(wifi_ap_event_handler_ctx* event_handler_ctx) {
@@ -312,6 +316,11 @@ static void button_start_stop_callback(button_handle handle, void* ctx) {
     if(btn_ctx->timer_started) {
         ESP_ERROR_CHECK(gptimer_stop(btn_ctx->timer));
         btn_ctx->timer_started = false;
+
+        taskENTER_CRITICAL(btn_ctx->ctrl_mutex);
+        btn_ctx->motor_reg->cmpr_a_gen_reg->gen = 0;
+        btn_ctx->motor_reg->cmpr_b_gen_reg->gen = 0;
+        taskEXIT_CRITICAL(btn_ctx->ctrl_mutex);
     } else {
         ESP_ERROR_CHECK(gptimer_start(btn_ctx->timer));
         btn_ctx->timer_started = true;
