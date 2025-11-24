@@ -1,0 +1,7 @@
+menu "Control Task Configuration"
+
+    config ENCODER_MAX_PULSES
+        int "Encoder maximum pulses per interval"
+        default 60
+
+endmenu

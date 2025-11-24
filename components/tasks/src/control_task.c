@@ -10,7 +10,19 @@
 #include "pid_control.h"
 #include "low_pass_filter.h"
 
+#define ENCODER_MAX_PULSES CONFIG_ENCODER_MAX_PULSES
+
 extern TaskHandle_t ctrl_task_handle;
+
+static inline uint16_t map_pulses_to_pwm(float pulses, uint16_t pwm_max) {
+    float pwm_value = (pulses * (float)pwm_max) / (float)ENCODER_MAX_PULSES;
+    return (uint16_t)(pwm_value < 0.0f ? 0.0f : (pwm_value > (float)pwm_max ? (float)pwm_max : pwm_value));
+}
+
+static void apply_pwm(motor_cmpr_reg* motor_reg, uint16_t pwm_value) {
+    motor_reg->cmpr_a_gen_reg->gen = pwm_value;
+    motor_reg->cmpr_b_gen_reg->gen = 0;
+}
 
 void control_task(void* pvParameters) {
     control_task_ctx* ctx = pvParameters;
@@ -21,11 +33,11 @@ void control_task(void* pvParameters) {
         return;
     }
     
-    ESP_ERROR_CHECK(pcnt_unit_start(ctx->pcnt_unit));
     int pulse_count = 0;
     float filtered_pulse_count = 0.0f;
     float output = 0.0f;
     uint16_t pwm_value = 0;
+    int i = 0;
     for(;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
@@ -38,12 +50,12 @@ void control_task(void* pvParameters) {
 
         (void)pid_control_update(ctx->pid, ctx->setpoint, filtered_pulse_count, &output);
 
+        pwm_value = map_pulses_to_pwm(output, ctx->pwm_max_ticks);
+        apply_pwm(ctx->motor_cmpr_reg, pwm_value);
+
         taskEXIT_CRITICAL(&ctx->mutex);
 
-        // todo: map output to pwm value
-        pwm_value = ctx->pwm_max_ticks;
-        ctx->motor_cmpr_reg->cmpr_a_gen_reg->gen = pwm_value;
-        ctx->motor_cmpr_reg->cmpr_b_gen_reg->gen = 0;
+        printf("Sample[%d]: %.2f  PID OUT: %.2f\n", i++, filtered_pulse_count, output);
     }
 }
 

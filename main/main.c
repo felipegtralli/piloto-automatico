@@ -28,6 +28,9 @@
 struct button_start_stop_ctx {
     gptimer_handle_t timer;
     motor_cmpr_reg* motor_reg;
+    pcnt_unit_handle_t pcnt_unit;
+    pid_control_handle pid;
+    low_pass_filter_handle filter;
     portMUX_TYPE* ctrl_mutex;
     bool timer_started;
 };
@@ -151,6 +154,9 @@ void app_main(void) {
     static struct button_start_stop_ctx btn_start_stop_ctx = {0};
     btn_start_stop_ctx.timer = timer;
     btn_start_stop_ctx.motor_reg = &motor_reg;
+    btn_start_stop_ctx.pcnt_unit = pcnt_unit;
+    btn_start_stop_ctx.pid = pid;
+    btn_start_stop_ctx.filter = filter;
     btn_start_stop_ctx.ctrl_mutex = &ctrl_task_ctx.mutex;
     btn_start_stop_ctx.timer_started = false;
 
@@ -318,10 +324,17 @@ static void button_start_stop_callback(button_handle handle, void* ctx) {
         btn_ctx->timer_started = false;
 
         taskENTER_CRITICAL(btn_ctx->ctrl_mutex);
+
+        (void)pcnt_unit_clear_count(btn_ctx->pcnt_unit);
+        (void)pcnt_unit_stop(btn_ctx->pcnt_unit);
+        (void)low_pass_filter_reset_state(btn_ctx->filter);
+        (void)pid_control_reset_state(btn_ctx->pid);
         btn_ctx->motor_reg->cmpr_a_gen_reg->gen = 0;
         btn_ctx->motor_reg->cmpr_b_gen_reg->gen = 0;
+
         taskEXIT_CRITICAL(btn_ctx->ctrl_mutex);
     } else {
+        ESP_ERROR_CHECK(pcnt_unit_start(btn_ctx->pcnt_unit));
         ESP_ERROR_CHECK(gptimer_start(btn_ctx->timer));
         btn_ctx->timer_started = true;
     }
