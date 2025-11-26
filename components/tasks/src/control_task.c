@@ -1,5 +1,4 @@
 #include <stdint.h>
-#include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/task.h"
@@ -54,8 +53,6 @@ void control_task(void* pvParameters) {
         apply_pwm(ctx->motor_cmpr_reg, pwm_value);
 
         taskEXIT_CRITICAL(&ctx->mutex);
-
-        printf("Sample[%d]: %.2f  PID OUT: %.2f\n", i++, filtered_pulse_count, output);
     }
 }
 
