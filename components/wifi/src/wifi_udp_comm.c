@@ -24,7 +24,6 @@ int udp_create_socket(void) {
 
         int ret = bind(sock, (struct sockaddr*)&local_addr, sizeof(local_addr));
         if(ret < 0) {
-            closesocket(sock);
             sock = -1;
         } else {
             struct timeval timeout = {
@@ -34,6 +33,7 @@ int udp_create_socket(void) {
             setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
         }
     }
+    
     return sock;  
 }
 

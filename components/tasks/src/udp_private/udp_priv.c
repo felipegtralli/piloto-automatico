@@ -34,7 +34,11 @@ static void build_ack(uint8_t* tx_buffer, size_t* tx_len, udp_command cmd, bool 
     [command (1 byte)] [rpm (4 bytes float)]
 */
 static void handle_get_rpm(uint8_t* tx_buffer, size_t* tx_len) {
-    // Implementation for getting RPM
+    tx_buffer[0] = CMD_GET_RPM;
+
+    extern float filtered_pulse_count;
+    memcpy(&tx_buffer[GET_CMD_OFFSET], &filtered_pulse_count, sizeof(float));
+    *tx_len = CMD_LEN + sizeof(float);    
 }
 
 /*

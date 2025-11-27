@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
+#include "driver/ledc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/task.h"
@@ -23,6 +24,8 @@
 #include "motor.h"
 #include "wifi.h"
 #include "button.h"
+#include "error_handling.h"
+#include "lrgb.h"
 
 /* types */
 struct button_start_stop_ctx {
@@ -62,6 +65,10 @@ struct button_start_stop_ctx {
 #define BUTTON_QUEUE_LENGHT 10
 #define BUTTON_QUEUE_ITEM_SIZE sizeof(button_event)
 
+#define LEDC_RED_GPIO CONFIG_LEDC_RED_GPIO
+#define LEDC_GREEN_GPIO CONFIG_LEDC_GREEN_GPIO
+#define LEDC_BLUE_GPIO CONFIG_LEDC_BLUE_GPIO
+
 /* variables */
 TaskHandle_t ctrl_task_handle = NULL;
 TaskHandle_t udp_task_handle = NULL;
@@ -69,8 +76,18 @@ TaskHandle_t button_task_handle = NULL;
 
 QueueHandle_t button_queue = NULL;
 
+StackType_t udp_task_stack[UDP_TASK_STACK_SIZE];
+StaticTask_t udp_task_buffer;
+
+rgb_channel_config lrgb_channels = {
+    .red_channel = LEDC_CHANNEL_0,
+    .green_channel = LEDC_CHANNEL_1,
+    .blue_channel = LEDC_CHANNEL_2,
+};
+
 /* function prototypes */
 static void nvs_init(void);
+static void lrgb_init(void);
 static void pid_init(pid_control_handle* handle, uint8_t* storage);
 static void lpf_init(low_pass_filter_handle* handle, uint8_t* storage);
 static void pwm_init_start(motor_handle* motor, uint8_t* storage);
@@ -85,6 +102,10 @@ static void btn_init(button_handle* handle, void* callback_ctx, uint8_t* storage
 void app_main(void) {
     // nvs setup
     nvs_init();
+
+    // led rgb setup
+    lrgb_init();
+    lrgb_set_duty_update(lrgb_channels, YELLOW_R, YELLOW_G, YELLOW_B);
 
     // pid controller setup
     _Alignas(PID_CONTROL_STORAGE_ALIGNMENT) static uint8_t pid_storage[PID_CONTROL_STORAGE_SIZE] = {0};
@@ -132,10 +153,9 @@ void app_main(void) {
     static udp_comm_task_ctx udp_task_ctx = {0};
     udp_ctx_init(&udp_task_ctx, &wifi_ap_ehandler_ctx, &ctrl_task_ctx);
 
-    static StackType_t udp_task_stack[UDP_TASK_STACK_SIZE];
-    static StaticTask_t udp_task_buffer;
     udp_task_handle = xTaskCreateStatic(udp_comm_task, UDP_TASK_NAME, UDP_TASK_STACK_SIZE, &udp_task_ctx, UDP_TASK_PRIORITY, udp_task_stack, &udp_task_buffer);
     if(!wifi_ap_ehandler_ctx.station_connected) {
+        handle_comm_task_state(SYSTEM_STATE_COMM_TASK_PAUSED, NULL, -1);
         vTaskSuspend(udp_task_handle);
     }
 
@@ -179,6 +199,39 @@ static void nvs_init(void) {
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+}
+
+static void lrgb_init(void) {
+    const ledc_timer_config_t ledc_timer = {
+            .speed_mode = LEDC_MODE,
+            .duty_resolution = LEDC_DUTY_RES,
+            .timer_num = LEDC_TIMER,
+            .freq_hz = LEDC_FREQUENCY_HZ,
+            .clk_cfg = LEDC_AUTO_CLK,
+    };
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+
+    ledc_channel_config_t ledc_channel = {
+        .speed_mode = LEDC_MODE,
+        .timer_sel = LEDC_TIMER,
+        .duty = 0,
+        .hpoint = 0,
+    };
+
+    // red channel
+    ledc_channel.gpio_num = LEDC_RED_GPIO;
+    ledc_channel.channel = lrgb_channels.red_channel;
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+
+    // green channel
+    ledc_channel.gpio_num = LEDC_GREEN_GPIO;
+    ledc_channel.channel = lrgb_channels.green_channel;
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+
+    // blue channel
+    ledc_channel.gpio_num = LEDC_BLUE_GPIO;
+    ledc_channel.channel = lrgb_channels.blue_channel;
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
 }
 
 static void pid_init(pid_control_handle* handle, uint8_t* storage) {
@@ -333,7 +386,10 @@ static void button_start_stop_callback(button_handle handle, void* ctx) {
         btn_ctx->motor_reg->cmpr_b_gen_reg->gen = 0;
 
         taskEXIT_CRITICAL(btn_ctx->ctrl_mutex);
+
+        handle_control_task_state(SYSTEM_STATE_CONTROL_TASK_PAUSED, NULL);
     } else {
+        handle_control_task_state(SYSTEM_STATE_CONTROL_TASK_RUNNNING, NULL);
         ESP_ERROR_CHECK(pcnt_unit_start(btn_ctx->pcnt_unit));
         ESP_ERROR_CHECK(gptimer_start(btn_ctx->timer));
         btn_ctx->timer_started = true;

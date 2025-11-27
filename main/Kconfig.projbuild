@@ -60,4 +60,16 @@ menu "Main Project Configuration"
         int "Button Start/Stop GPIO"
         default 10
 
+    config LEDC_RED_GPIO
+        int "LED Red GPIO"
+        default 4
+
+    config LEDC_GREEN_GPIO
+        int "LED Green GPIO"
+        default 5
+
+    config LEDC_BLUE_GPIO
+        int "LED Blue GPIO"
+        default 6
+
 endmenu

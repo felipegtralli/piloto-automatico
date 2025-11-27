@@ -8,10 +8,13 @@
 #include "tasks.h"
 #include "pid_control.h"
 #include "low_pass_filter.h"
+#include "error_handling.h"
 
 #define ENCODER_MAX_PULSES CONFIG_ENCODER_MAX_PULSES
 
 extern TaskHandle_t ctrl_task_handle;
+
+float filtered_pulse_count = 0.0f;
 
 static inline uint16_t map_pulses_to_pwm(float pulses, uint16_t pwm_max) {
     float pwm_value = (pulses * (float)pwm_max) / (float)ENCODER_MAX_PULSES;
@@ -27,16 +30,13 @@ void control_task(void* pvParameters) {
     control_task_ctx* ctx = pvParameters;
 
     if(ctx == NULL || ctx->pid == NULL || ctx->filter == NULL || ctx->motor_cmpr_reg == NULL || ctx->pcnt_unit == NULL) {
-        // todo: error handling
-        vTaskDelete(NULL);
+        handle_control_task_state(SYSTEM_STATE_CONTROL_TASK_FAIL, ctx);
         return;
     }
     
     int pulse_count = 0;
-    float filtered_pulse_count = 0.0f;
     float output = 0.0f;
     uint16_t pwm_value = 0;
-    int i = 0;
     for(;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
@@ -57,10 +57,10 @@ void control_task(void* pvParameters) {
 }
 
 bool IRAM_ATTR control_task_notify_isr(gptimer_handle_t timer, const gptimer_alarm_event_data_t* edata, void* user_ctx) {
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    BaseType_t higher_priority_task_woken = pdFALSE;
 
-    vTaskNotifyGiveFromISR(ctrl_task_handle, &xHigherPriorityTaskWoken);
-    if(xHigherPriorityTaskWoken) {
+    vTaskNotifyGiveFromISR(ctrl_task_handle, &higher_priority_task_woken);
+    if(higher_priority_task_woken) {
         portYIELD_FROM_ISR();
         return true;
     }

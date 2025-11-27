@@ -3,6 +3,7 @@
 #include "esp_wifi_types_generic.h"
 #include "esp_mac.h"
 #include "wifi.h"
+#include "error_handling.h"
 
 extern TaskHandle_t udp_task_handle;
 
@@ -18,6 +19,7 @@ void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id
         ESP_LOGI(TAG, "Station connected: MAC: "MACSTR", AID: %d", MAC2STR(event->mac), event->aid);
 
         vTaskResume(udp_task_handle);
+        handle_comm_task_state(SYSTEM_STATE_COMM_TASK_RUNNING, NULL, -1);
     }
 
     if(event_id == WIFI_EVENT_AP_STADISCONNECTED) {
