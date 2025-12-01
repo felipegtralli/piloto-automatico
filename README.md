@@ -17,6 +17,7 @@ O sistema realiza o controle de velocidade de um motor DC por meio de um laço f
 - **Motor DC**: atuador controlado.
 - **Encoder incremental**: realimentação da velocidade (conectado a GPIOs com suporte a interrupção).
 - **Botão**: para comandos locais (start/stop/reset).
+- **Led RBG**: para monitoramento de estado do sistema.
 
 ![PCB do projeto](imgs/placa.png)
 
@@ -50,7 +51,7 @@ O software é modular, com os seguintes componentes principais:
 4. **Botão físico**:
    - Permite comandos locais (ex: start/stop/reset).
 5. **Monitoramento**:
-   - Estado do sistema pode ser monitorado via UDP.
+   - Estado do sistema pode ser monitorado via UDP e LED de estado.
 
 ---
 
